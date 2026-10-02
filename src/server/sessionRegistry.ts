@@ -1,5 +1,6 @@
 import type { Config } from "./config.ts";
 import { PiRpcSession } from "./piSession.ts";
+import { normalizeSessionKey } from "./paths.ts";
 
 export interface ManagedSession {
   path: string;
@@ -28,14 +29,15 @@ export class SessionRegistry {
   }
 
   async acquire(sessionPath: string, cwd: string): Promise<ManagedSession> {
-    const existing = this.live.get(sessionPath);
+    const key = normalizeSessionKey(sessionPath);
+    const existing = this.live.get(key);
     if (existing) {
       existing.refs += 1;
       this.clearIdle(existing);
       return existing;
     }
 
-    const inFlight = this.starting.get(sessionPath);
+    const inFlight = this.starting.get(key);
     if (inFlight) {
       const managed = await inFlight;
       managed.refs += 1;
@@ -43,19 +45,19 @@ export class SessionRegistry {
       return managed;
     }
 
-    const startPromise = this.spawnSession(sessionPath, cwd);
-    this.starting.set(sessionPath, startPromise);
+    const startPromise = this.spawnSession(key, cwd);
+    this.starting.set(key, startPromise);
     try {
       const managed = await startPromise;
       managed.refs += 1;
       return managed;
     } finally {
-      this.starting.delete(sessionPath);
+      this.starting.delete(key);
     }
   }
 
   get(sessionPath: string): ManagedSession | undefined {
-    return this.live.get(sessionPath);
+    return this.live.get(normalizeSessionKey(sessionPath));
   }
 
   /** Every live subprocess, including ones whose session file is not yet written. */
@@ -87,11 +89,12 @@ export class SessionRegistry {
       throw error;
     }
 
-    const sessionFile = state["sessionFile"];
-    if (typeof sessionFile !== "string" || sessionFile === "") {
+    const reported = state["sessionFile"];
+    if (typeof reported !== "string" || reported === "") {
       await rpc.stop().catch(() => undefined);
       throw new Error("pi did not report a session file for the new session");
     }
+    const sessionFile = normalizeSessionKey(reported);
 
     const existing = this.live.get(sessionFile);
     if (existing) {
@@ -117,20 +120,21 @@ export class SessionRegistry {
   }
 
   release(sessionPath: string): void {
-    const managed = this.live.get(sessionPath);
+    const managed = this.live.get(normalizeSessionKey(sessionPath));
     if (!managed) return;
     managed.refs = Math.max(0, managed.refs - 1);
     if (managed.refs > 0) return;
     managed.idleTimer = setTimeout(() => {
-      void this.dispose(sessionPath);
+      void this.dispose(managed.path);
     }, this.config.idleTimeoutMs);
     managed.idleTimer.unref?.();
   }
 
   async dispose(sessionPath: string): Promise<void> {
-    const managed = this.live.get(sessionPath);
+    const key = normalizeSessionKey(sessionPath);
+    const managed = this.live.get(key);
     if (!managed) return;
-    this.live.delete(sessionPath);
+    this.live.delete(key);
     this.clearIdle(managed);
     await managed.rpc.stop().catch(() => undefined);
   }

@@ -206,6 +206,34 @@
 - [ ] 可选的 Docker 部署（供另一台机器使用）
 - [ ] 窄屏自适应布局（统计条 + 两个下拉在窄屏下会换行，未调）
 
+## M2.5 整体代码 review 整改（2026-10-03）
+
+全量走读 src/ + scripts/ 后的问题清单（typecheck 与单测 13/13 当时为绿）。
+
+P1 — 真实缺陷，建议尽快修（2026-10-03 已全部修复并提交）：
+
+- [x] SSE 断连竞态泄漏子进程：`httpServer.ts` 的 `res.on("close", finish)` 注册晚于 `registry.acquire` 的 await；浏览器在 pi 冷启动 1-3s 窗口内刷新/切换会话时 refs 永不释放，子进程只能靠 15 分钟 idle 兜底回收 — 修法：提前置 closed 标志，acquire 返回后补判 finish() — 验证：隔离环境 PI_SHELL_IDLE_TIMEOUT_MS=3000，冷启动窗口 300ms 断开流，t+3000ms pi 子进程数 0（修复前 refs 泄漏进程永挂）
+- [x] rename 跨会话竞态：`app.js` 对未打开会话先 `openSession()` 但 EventSource 建连即返回，pi 冷启动期间 `registry.get` 未命中 → 404 — 修法（服务端）：handleRename 未命中时 fallback `acquire`（与流同去重），rename 完 release — 验证：服务冷启动后直接 rename 未打开会话返回 `{"ok":true}`，且 fallback 的 ref 正确归还（idle 3s 后子进程回收）
+- [x] 符号链接路径双开会话：registry 键与校验用 `resolve()`（不展开 symlink），sessionsDir 处于符号链接下时同一路径注册两个子进程写同一文件 — 修法：新增 `paths.ts#normalizeSessionKey`（realpath 至最深存在祖先，pending 会话键落盘前后一致），registry 全部键与 httpServer 三个入口校验统一归一 — 验证：隔离 sessionsDir 走 symlink，同一文件经 link/real 两路径各开流，均收到 snapshot 且服务端只有 1 个子进程；新增 `test/paths.test.ts` 5 例（symlink 解析/pending 一致性/幂等），单测 18/18
+
+P2 — 健壮性：
+
+- [ ] `piSession.ts:163` stdin.write 无 error 监听：子进程自行崩溃瞬间写入会抛未捕获 EPIPE 异常，整个服务崩（launchd 会拉起但所有会话断线）— 修法：`child.stdin.on("error", …)` 静默兜底一行
+- [ ] EventSource 无限自动重连：服务端 finish() 关流后浏览器默认无限重连 `/api/stream`，会把刚回收的子进程重新拉活 — 修法：onerror 中 close 并提示手动重开，或限次重连
+- [ ] 前端 `api.abort()` 不检查响应：停止失败时用户无感知（后端 60s RPC 超时也拿不到反馈）— 修法：检查 res.ok，失败给 notice
+
+P3 — 代码质量 / 小问题（可攒着一起清）：
+
+- [ ] `httpServer.ts:129` `void config;` 是压 unused 告警的应付写法，连带 `collectSessions` 内重复解构 — 应在上层解构一次
+- [ ] `index.ts:33` 「Avoid leaking AWT/Java side-effects」注释与本项目无关（疑从其他项目带入），应删除
+- [ ] `sessionIndex.ts:152` createdAt 缺头时间戳时回退 mtime，「创建时间」语义变成「修改时间」
+- [ ] `readSlices` 头尾切片可能截断 UTF-16 代理对，占位符会污染标题最后一个字（极低概率）
+- [ ] ImageStore 单图超过 256MB 上限时绕过缓存（每次 snapshot 重新 put）；由 pi 历史写入的 base64 理论可超，快照仍正确只是浪费
+- [ ] `plan.ts` 总数把「已知取舍」3 项也计入（110），进度条分母含非待办项
+- [ ] `handleDeleteFolder` 串行删除大会话目录时可能顶到 HTTP 超时，可改 `Promise.all` 并发（注意失败聚合语义不变）
+
+结论记录：整体无明显过度设计（零依赖、无构建的约束贯彻得好），vendor 方案与错误处理风格符合本项目定位；上述 P1 三项为迭代修复优先级。
+
 ## 已知取舍
 
 - [ ] 会话标题最多读文件头 256KB；极端情况下首条用户消息超出则回退为占位标题

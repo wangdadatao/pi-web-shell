@@ -7,8 +7,9 @@ import { extname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Config } from "./config.ts";
 import { ImageStore, isImageHash, stripInlineImages } from "./imageStore.ts";
+import { normalizeSessionKey } from "./paths.ts";
 import type { SessionIndex } from "./sessionIndex.ts";
-import type { SessionRegistry } from "./sessionRegistry.ts";
+import type { ManagedSession, SessionRegistry } from "./sessionRegistry.ts";
 import type {
   FolderSummary,
   ModelOption,
@@ -214,16 +215,33 @@ async function handleNewSession(
  * Rename via pi's own `set_session_name` RPC: it appends a `session_info` entry
  * (persisted or held in memory until the first flush) and emits
  * `session_info_changed`, which live streams already forward.
+ *
+ * The client may fire this right after opening a session whose pi subprocess
+ * is still starting (the exact-registry miss). Fall back to `acquire` — the
+ * same dedup the SSE stream uses — so the rename waits for that startup
+ * instead of 404-ing, then hands the reference back.
  */
 async function handleRename(req: IncomingMessage, res: ServerResponse, deps: ServerDeps): Promise<void> {
   const body = await readJson(req);
-  const sessionPath = String(body.path ?? "");
+  const rawPath = String(body.path ?? "");
   const name = String(body.name ?? "").trim();
   if (name === "") return sendJson(res, 400, { error: "name is required" });
 
-  const managed = deps.registry.get(sessionPath);
-  if (!managed) return sendJson(res, 404, { error: "session not open" });
-  await managed.rpc.send({ type: "set_session_name", name });
+  const key = normalizeSessionKey(rawPath);
+  const managed = deps.registry.get(key);
+  if (managed) {
+    await managed.rpc.send({ type: "set_session_name", name });
+    return sendJson(res, 200, { ok: true, name });
+  }
+
+  const summary = await deps.index.get(key);
+  if (!summary) return sendJson(res, 404, { error: "session not open" });
+  const acquired = await deps.registry.acquire(key, summary.cwd);
+  try {
+    await acquired.rpc.send({ type: "set_session_name", name });
+  } finally {
+    deps.registry.release(acquired.path);
+  }
   return sendJson(res, 200, { ok: true, name });
 }
 
@@ -234,9 +252,10 @@ async function handleRename(req: IncomingMessage, res: ServerResponse, deps: Ser
  */
 async function handleDelete(req: IncomingMessage, res: ServerResponse, deps: ServerDeps): Promise<void> {
   const body = await readJson(req);
-  const sessionPath = resolve(String(body.path ?? ""));
+  const sessionPath = normalizeSessionKey(String(body.path ?? ""));
+  const sessionsRoot = normalizeSessionKey(deps.config.sessionsDir);
 
-  if (!isInside(deps.config.sessionsDir, sessionPath) || !sessionPath.endsWith(".jsonl")) {
+  if (!isInside(sessionsRoot, sessionPath) || !sessionPath.endsWith(".jsonl")) {
     return sendJson(res, 400, { error: "invalid session path" });
   }
 
@@ -294,8 +313,9 @@ async function handleDeleteFolder(req: IncomingMessage, res: ServerResponse, dep
       results.push({ path: session.path, method: "gone" });
       continue;
     }
-    const sessionPath = resolve(session.path);
-    if (!isInside(deps.config.sessionsDir, sessionPath) || !sessionPath.endsWith(".jsonl")) {
+    const sessionPath = normalizeSessionKey(session.path);
+    const sessionsRoot = normalizeSessionKey(deps.config.sessionsDir);
+    if (!isInside(sessionsRoot, sessionPath) || !sessionPath.endsWith(".jsonl")) {
       failed.push(session.path);
       continue;
     }
@@ -319,9 +339,10 @@ async function handleStream(
   images: ImageStore,
 ): Promise<void> {
   const { config, index, registry } = deps;
-  const sessionPath = resolve(url.searchParams.get("path") ?? "");
+  const sessionPath = normalizeSessionKey(url.searchParams.get("path") ?? "");
+  const sessionsRoot = normalizeSessionKey(config.sessionsDir);
 
-  if (!isInside(config.sessionsDir, sessionPath) || !sessionPath.endsWith(".jsonl")) {
+  if (!isInside(sessionsRoot, sessionPath) || !sessionPath.endsWith(".jsonl")) {
     return sendJson(res, 400, { error: "invalid session path" });
   }
 
@@ -368,42 +389,68 @@ async function handleStream(
     send(frame);
   };
 
-  let managed;
+  let closedByHandler = false;
+  let heartbeat: NodeJS.Timeout | null = null;
+  let acquired: ManagedSession | null = null;
+  function finish(): void {
+    if (closedByHandler) return;
+    closedByHandler = true;
+    closed = true;
+    if (heartbeat) clearInterval(heartbeat);
+    if (acquired) {
+      const managed = acquired;
+      acquired = null;
+      unsubscribers.forEach((off) => off());
+      unsubscribers.length = 0;
+      registry.release(managed.path);
+    }
+    end();
+  }
+
+  // The client can hang up at any moment — including while `registry.acquire`
+  // is still spawning pi (a fast refresh during a cold start). Register the
+  // close hook BEFORE awaiting, and re-check afterwards, so a disconnect in
+  // that window can never leak the subprocess reference we are about to take.
+  let clientGone = false;
+  res.on("close", () => {
+    clientGone = true;
+    finish();
+  });
+
+  const unsubscribers: Array<() => void> = [];
+  let managed: ManagedSession;
   try {
     managed = await registry.acquire(sessionPath, cwd);
   } catch (error) {
     flushError(res, error, send);
     return;
   }
-
-  const unsubEvent = managed.rpc.onEvent((event) => {
-    flush({ type: "event", event });
-    if (event.type === "agent_settled") {
-      void getSessionStats(managed.rpc)
-        .then((stats) => flush({ type: "stats", stats }))
-        .catch(() => undefined);
-    }
-  });
-  const unsubExit = managed.rpc.onExit(() => {
-    flush({ type: "error", error: "pi process exited" });
-    finish();
-  });
-
-  const heartbeat = setInterval(() => write(": ping\n\n"), SSE_HEARTBEAT_MS);
-
-  let closedByHandler = false;
-  function finish(): void {
-    if (closedByHandler) return;
-    closedByHandler = true;
-    closed = true;
-    clearInterval(heartbeat);
-    unsubEvent();
-    unsubExit();
-    registry.release(sessionPath);
-    end();
+  if (clientGone) {
+    // The client hung up while we were spawning: hand the ref straight back
+    // (finish() could not release it — `acquired` was still null).
+    registry.release(managed.path);
+    return;
   }
 
-  res.on("close", finish);
+  acquired = managed;
+  unsubscribers.push(
+    managed.rpc.onEvent((event) => {
+      flush({ type: "event", event });
+      if (event.type === "agent_settled") {
+        void getSessionStats(managed.rpc)
+          .then((stats) => flush({ type: "stats", stats }))
+          .catch(() => undefined);
+      }
+    }),
+  );
+  unsubscribers.push(
+    managed.rpc.onExit(() => {
+      flush({ type: "error", error: "pi process exited" });
+      finish();
+    }),
+  );
+
+  heartbeat = setInterval(() => write(": ping\n\n"), SSE_HEARTBEAT_MS);
 
   try {
     const state = await getState(managed.rpc);
