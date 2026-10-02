@@ -1,0 +1,32 @@
+{
+  "name": "pi-web-shell",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A local web shell for the pi coding agent: multi-folder sessions, history, streaming, and image input.",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "start": "node --env-file-if-exists=.env src/server/index.ts",
+    "dev": "node --watch --env-file-if-exists=.env src/server/index.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test test/*.test.ts",
+    "plan": "node scripts/plan.ts",
+    "shot": "node scripts/screenshot.ts",
+    "vendor": "node scripts/vendor.ts",
+    "postinstall": "node scripts/vendor.ts",
+    "service:install": "node scripts/launchd.ts install",
+    "service:uninstall": "node scripts/launchd.ts uninstall",
+    "service:status": "node scripts/launchd.ts status",
+    "service:restart": "node scripts/launchd.ts restart",
+    "theme:check": "node scripts/theme.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "dompurify": "^3.4.16",
+    "marked": "^18.0.14",
+    "prismjs": "^1.30.0",
+    "typescript": "^5.9.2"
+  }
+}

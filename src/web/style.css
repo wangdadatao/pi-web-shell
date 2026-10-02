@@ -1,0 +1,1116 @@
+:root {
+  --bg: #0f1115;
+  --bg-pane: #161a21;
+  --bg-raised: #1e242d;
+  --border: #262d38;
+  --text: #e6e9ef;
+  --muted: #8b95a5;
+  --accent: #4f8cff;
+  --user: #223049;
+  --assistant: #1a2029;
+  --tool: #241f2e;
+  --danger: #ff6b6b;
+  --ok: #45d483;
+
+  /*
+   * Markdown / syntax palette copied verbatim from pi's own theme
+   * (dist/modes/interactive/theme/dark.json), resolved by `pi`'s HTML
+   * exporter. Keeping these identical is what makes the shell read like the TUI.
+   */
+  --md-heading: #cd9a22;
+  --md-link: #69add0;
+  --md-code: #a798d7;
+  --md-code-block: #68b78d;
+  --md-code-block-border: #9da5a9;
+  --md-quote: #9da5a9;
+  --md-quote-border: #9da5a9;
+  --md-hr: #9da5a9;
+  --md-list-bullet: #a798d7;
+
+  --syntax-comment: #9da5a9;
+  --syntax-keyword: #69add0;
+  --syntax-function: #cd9a22;
+  --syntax-variable: #5db3ba;
+  --syntax-string: #de8d5a;
+  --syntax-number: #68b78d;
+  --syntax-type: #a798d7;
+  --syntax-operator: #9da5a9;
+  --syntax-punctuation: #9da5a9;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB",
+    "Microsoft YaHei", sans-serif;
+}
+
+#app {
+  display: grid;
+  grid-template-columns: 240px 280px 1fr;
+  height: 100vh;
+  overflow: hidden;
+}
+
+#app {
+  display: grid;
+  grid-template-columns: 240px 280px 1fr;
+  /* minmax(0, 1fr) keeps panes from growing to their content height, which
+     would push the composer out of the viewport and break scrolling. */
+  grid-template-rows: minmax(0, 1fr);
+  height: 100vh;
+  overflow: hidden;
+}
+
+.pane {
+  background: var(--bg-pane);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.pane-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  border-bottom: 1px solid var(--border);
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.head-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.list {
+  overflow-y: auto;
+  overflow-x: hidden;
+  flex: 1;
+  min-height: 0;
+  padding: 6px;
+}
+
+.item {
+  padding: 9px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  margin-bottom: 3px;
+}
+
+.item:hover {
+  background: var(--bg-raised);
+}
+
+.item.active {
+  background: var(--bg-raised);
+  border-color: var(--accent);
+}
+
+.item .name {
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.item .badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 10px;
+  vertical-align: 1px;
+}
+
+.item.pending .name {
+  color: var(--accent);
+}
+
+.item .sub {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 2px;
+}
+
+/* Rename/delete, revealed on hover so the list stays clean. */
+.item .item-actions {
+  display: none;
+  position: absolute;
+  right: 8px;
+  top: 6px;
+  gap: 2px;
+}
+
+.item.session {
+  position: relative;
+}
+
+.item.folder {
+  position: relative;
+}
+
+.item.session:hover .item-actions,
+.item.folder:hover .item-actions {
+  display: flex;
+}
+
+/* Shrink the text on hover so long titles ellipsize before the buttons. */
+.item.session:hover .name,
+.item.session:hover .sub,
+.item.folder:hover .name,
+.item.folder:hover .sub {
+  padding-right: 52px;
+}
+
+.item .item-actions .icon-btn {
+  padding: 2px 5px;
+  font-size: 11px;
+  line-height: 1.2;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+}
+
+#chat {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  position: relative;
+}
+
+#chat-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-pane);
+  flex-shrink: 0;
+}
+
+.chat-head-main {
+  min-width: 0;
+  flex: 1;
+}
+
+#chat-title {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.muted {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.chat-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.status {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  display: inline-block;
+  background: var(--muted);
+}
+
+.status.live {
+  background: var(--ok);
+  animation: pulse 1.2s infinite;
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.messages {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 20px 24px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.msg {
+  max-width: 1032px;
+  min-width: 0;
+  width: fit-content;
+  border-radius: 12px;
+  padding: 12px 15px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  border: 1px solid var(--border);
+}
+
+.msg.user {
+  align-self: flex-end;
+  background: var(--user);
+  max-width: 720px;
+}
+
+.msg.assistant {
+  align-self: flex-start;
+  background: var(--assistant);
+}
+
+.msg.system,
+.msg.notice {
+  align-self: center;
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-size: 12px;
+  padding: 2px;
+  white-space: pre-wrap;
+}
+
+.msg.error {
+  align-self: center;
+  border-color: var(--danger);
+  color: var(--danger);
+  background: transparent;
+}
+
+.msg img,
+.tool-image {
+  max-width: 100%;
+  max-height: 320px;
+  border-radius: 8px;
+  display: block;
+  margin: 6px 0;
+}
+
+/* Tool-result images stay collapsed until asked for (see renderToolImage). */
+.image-placeholder {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: #14101d;
+  border: 1px dashed #4a3f63;
+  color: var(--md-code);
+  border-radius: 7px;
+  padding: 4px 9px;
+  margin: 4px 0;
+  font-size: 11.5px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  cursor: pointer;
+}
+
+.image-placeholder:hover {
+  border-color: var(--md-code);
+  border-style: solid;
+}
+
+.tool-image {
+  /* Constrained so a 2000px screenshot does not dominate the transcript. */
+  max-width: 100%;
+  max-height: 320px;
+  border-radius: 8px;
+  display: block;
+  margin: 6px 0;
+  cursor: zoom-in;
+}
+
+/* Shown only when a session takes a moment to load. */
+.skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 6px 0;
+}
+
+.skeleton i {
+  display: block;
+  height: 13px;
+  border-radius: 6px;
+  background: linear-gradient(90deg, #1b212a 25%, #242c37 50%, #1b212a 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.2s ease-in-out infinite;
+}
+
+.skeleton i:nth-child(2) {
+  width: 82%;
+}
+
+.skeleton i:nth-child(3) {
+  width: 61%;
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+.msg pre {
+  background: #0b0e13;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  overflow-x: auto;
+  max-width: 100%;
+  margin: 10px 0;
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+
+.role-tag {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+.thinking-block {
+  border-left: 2px solid #6b5b95;
+  padding-left: 12px;
+  color: #b9aee0;
+  margin: 6px 0;
+  font-size: 13px;
+  line-height: 1.65;
+  max-width: 100%;
+}
+
+.thinking-block > summary {
+  cursor: pointer;
+  color: #8f83b8;
+  font-size: 12px;
+  user-select: none;
+}
+
+.thinking-body {
+  font-style: italic;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin-top: 4px;
+  opacity: 0.85;
+}
+
+.tool-result {
+  max-width: 100%;
+  min-width: 0;
+}
+
+.tool-result > summary {
+  cursor: pointer;
+  color: #c3a6ff;
+  font-size: 12px;
+  font-weight: 600;
+  user-select: none;
+}
+
+/* Consecutive tool calls collapse into a single block. */
+.tool-group {
+  align-self: flex-start;
+  max-width: 860px;
+  min-width: 0;
+  background: var(--tool);
+  border: 1px solid #3a3050;
+  border-radius: 10px;
+  padding: 7px 11px;
+}
+
+.tool-group > summary.tool-group-summary {
+  cursor: pointer;
+  color: #c3a6ff;
+  font-size: 12.5px;
+  font-weight: 600;
+  user-select: none;
+  list-style: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tool-group > summary.tool-group-summary::-webkit-details-marker {
+  display: none;
+}
+
+.tool-group > summary.tool-group-summary::before {
+  content: "▸ ";
+  color: var(--muted);
+}
+
+.tool-group[open] > summary.tool-group-summary::before {
+  content: "▾ ";
+}
+
+.tool-group-body {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 7px;
+}
+
+.tool-group .tool-chip,
+.tool-group .tool-result {
+  margin: 0;
+  background: #14101d;
+  border: 1px solid #2f2740;
+  border-radius: 7px;
+  padding: 5px 9px;
+  font-size: 12px;
+}
+
+.tool-group .tool-chip pre {
+  margin: 5px 0 0;
+  background: #0b0e13;
+  border: 1px solid #2f2740;
+  border-radius: 6px;
+  padding: 6px 8px;
+  overflow-x: auto;
+  max-width: 100%;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.tool-group .tool-output {
+  color: #b8c4d4;
+}
+
+/* ---------------------------------------------------------------- markdown */
+
+.md {
+  white-space: normal;
+  max-width: 100%;
+  word-break: break-word;
+  line-height: 1.68;
+  font-size: 12px;
+}
+
+.md > :first-child {
+  margin-top: 0;
+}
+
+.md > :last-child {
+  margin-bottom: 0;
+}
+
+.md p {
+  margin: 9px 0;
+}
+
+.md h1,
+.md h2,
+.md h3,
+.md h4,
+.md h5,
+.md h6 {
+  color: var(--md-heading);
+  line-height: 1.35;
+  font-weight: bold;
+}
+
+.md h1 {
+  font-size: 20px;
+  margin: 20px 0 10px;
+}
+
+.md h2 {
+  font-size: 17px;
+  margin: 19px 0 9px;
+}
+
+.md h3 {
+  font-size: 15px;
+  margin: 17px 0 8px;
+}
+
+.md h4,
+.md h5,
+.md h6 {
+  font-size: 14px;
+  margin: 15px 0 7px;
+  color: var(--md-heading);
+  opacity: 0.85;
+}
+
+.md ul,
+.md ol {
+  margin: 9px 0;
+  padding-left: 26px;
+}
+
+.md li {
+  margin: 4px 0;
+}
+
+.md li > p {
+  margin: 4px 0;
+}
+
+/* Bullets are violet in pi's theme; it is a strong scanning cue. */
+.md li::marker {
+  color: var(--md-list-bullet);
+}
+
+.md blockquote {
+  margin: 10px 0;
+  padding: 3px 13px;
+  border-left: 3px solid var(--md-quote-border);
+  color: var(--md-quote);
+  font-style: italic;
+}
+
+/* Inline code carries the violet tint that makes pi's output recognisable. */
+.md code {
+  background: rgba(128, 128, 128, 0.2);
+  color: var(--md-code);
+  border-radius: 4px;
+  padding: 1.5px 5px;
+  font-size: 12.5px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.md pre code {
+  background: none;
+  padding: 0;
+}
+
+.md a {
+  color: var(--md-link);
+  text-decoration: underline;
+}
+
+.md table {
+  border-collapse: collapse;
+  margin: 10px 0;
+  display: block;
+  overflow-x: auto;
+  max-width: 100%;
+  border: 1px solid var(--md-code-block-border);
+  border-radius: 6px;
+}
+
+.md th,
+.md td {
+  border: 1px solid var(--md-code-block-border);
+  padding: 6px 11px;
+  text-align: left;
+}
+
+.md th {
+  background: rgba(128, 128, 128, 0.1);
+  font-weight: bold;
+  color: var(--text);
+}
+
+/* Label-style first columns read badly when they wrap mid-word. */
+.md th:first-child,
+.md td:first-child {
+  white-space: nowrap;
+}
+
+.md hr {
+  border: none;
+  border-top: 1px solid var(--md-hr);
+  margin: 18px 0;
+}
+
+.plain {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12.5px;
+}
+
+/* ------------------------------------------------------------- stats bar */
+
+.stats-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 16px;
+  padding: 6px 18px 8px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-pane);
+  font-size: 11.5px;
+  color: var(--muted);
+  flex-shrink: 0;
+  min-height: 28px;
+}
+
+.stats-bar.empty {
+  display: none;
+}
+
+.stats-items {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 16px;
+  flex: 1;
+  min-width: 0;
+}
+
+.stats-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+/* `display:flex` above would otherwise beat the UA `[hidden]` rule. */
+.stats-actions[hidden],
+.stat-select[hidden] {
+  display: none;
+}
+
+.stat-select {
+  appearance: none;
+  -webkit-appearance: none;
+  max-width: 240px;
+  padding: 2px 22px 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background-color: var(--bg-raised);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%238b95a5' stroke-width='1.4'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 7px center;
+  background-size: 8px;
+  color: var(--text);
+  font: inherit;
+  font-size: 11.5px;
+  line-height: 1.7;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.stat-select:hover {
+  border-color: #3a4557;
+}
+
+.stat-select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.stat-select:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.stat.speed {
+  color: var(--accent);
+}
+
+.stat.speed.idle-speed {
+  color: #4a5566;
+}
+
+.ctx-bar {
+  display: inline-block;
+  width: 56px;
+  height: 5px;
+  border-radius: 3px;
+  background: #2a323e;
+  overflow: hidden;
+}
+
+.ctx-bar i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.3s ease;
+}
+
+/* --------------------------------------------------------- code blocks */
+
+.code-block {
+  margin: 10px 0;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.code-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 3px 8px;
+  background: #10141b;
+  border: 1px solid var(--border);
+  border-bottom: none;
+  border-radius: 8px 8px 0 0;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.code-lang {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  letter-spacing: 0.04em;
+  text-transform: lowercase;
+}
+
+.code-block pre {
+  margin: 0;
+  border-radius: 0 0 8px 8px;
+}
+
+.code-block pre code {
+  display: block;
+}
+
+.copy-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  border-radius: 5px;
+  padding: 1px 7px;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.copy-btn:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.copy-btn.copied {
+  color: var(--ok);
+  border-color: var(--ok);
+}
+
+.copy-btn.failed {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+.msg-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 18px;
+  margin-bottom: 4px;
+}
+
+.msg-head .role-tag {
+  margin-bottom: 0;
+}
+
+.msg-head .copy-btn {
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.msg:hover .msg-head .copy-btn,
+.msg-head .copy-btn:focus-visible,
+.msg-head .copy-btn.copied {
+  opacity: 1;
+}
+
+/*
+ * Prism tokens mapped onto pi's syntax palette (dark.json → syntax* colors).
+ * Untagged blocks get a single colour, exactly like the TUI's fallback.
+ */
+.code-block pre code {
+  color: var(--text);
+}
+
+.code-block.no-lang pre code {
+  color: var(--md-code-block);
+}
+
+.code-block .token.comment,
+.code-block .token.prolog,
+.code-block .token.doctype,
+.code-block .token.cdata {
+  color: var(--syntax-comment);
+}
+
+.code-block .token.punctuation {
+  color: var(--syntax-punctuation);
+}
+
+.code-block .token.keyword,
+.code-block .token.atrule,
+.code-block .token.rule,
+.code-block .token.tag,
+.code-block .token.important {
+  color: var(--syntax-keyword);
+}
+
+.code-block .token.number,
+.code-block .token.boolean {
+  color: var(--syntax-number);
+}
+
+.code-block .token.string,
+.code-block .token.char,
+.code-block .token.attr-value,
+.code-block .token.regex {
+  color: var(--syntax-string);
+}
+
+.code-block .token.function,
+.code-block .token.function-variable {
+  color: var(--syntax-function);
+}
+
+.code-block .token.class-name,
+.code-block .token.builtin,
+.code-block .token.maybe-class-name,
+.code-block .token.namespace {
+  color: var(--syntax-type);
+}
+
+.code-block .token.property,
+.code-block .token.attr-name,
+.code-block .token.variable,
+.code-block .token.constant,
+.code-block .token.symbol,
+.code-block .token.parameter {
+  color: var(--syntax-variable);
+}
+
+.code-block .token.operator,
+.code-block .token.entity,
+.code-block .token.url {
+  color: var(--syntax-operator);
+}
+
+.code-block .token.deleted {
+  color: #ea7f81;
+}
+
+.code-block .token.inserted {
+  color: var(--syntax-number);
+}
+
+.code-block .token.bold {
+  font-weight: 600;
+}
+
+.code-block .token.italic {
+  font-style: italic;
+}
+
+.tool-chip {
+  display: block;
+  background: var(--tool);
+  border: 1px solid #3a3050;
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+  margin: 6px 0;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.tool-chip > summary.tool-name {
+  color: #c3a6ff;
+  font-weight: 600;
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+}
+
+.tool-chip > summary.tool-name::before {
+  content: "▸ ";
+  color: var(--muted);
+}
+
+.tool-chip[open] > summary.tool-name::before {
+  content: "▾ ";
+}
+
+.thinking-block > summary::before {
+  content: "▸ ";
+  color: var(--muted);
+}
+
+.thinking-block[open] > summary::before {
+  content: "▾ ";
+}
+
+.tool-chip pre {
+  margin: 4px 0 0;
+  background: #14101d;
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+.tool-chip.error {
+  border-color: var(--danger);
+}
+
+#composer {
+  border-top: 1px solid var(--border);
+  padding: 12px 18px 10px;
+  background: var(--bg-pane);
+  flex-shrink: 0;
+}
+
+.composer-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+}
+
+#input {
+  flex: 1;
+  resize: none;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text);
+  padding: 10px 12px;
+  font: inherit;
+  max-height: 220px;
+  min-height: 40px;
+}
+
+#input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+button {
+  background: var(--accent);
+  color: white;
+  border: none;
+  border-radius: 10px;
+  padding: 10px 18px;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.ghost-btn,
+.icon-btn {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  padding: 6px 10px;
+  font-weight: 500;
+}
+
+.icon-btn {
+  padding: 6px 8px;
+  line-height: 1;
+}
+
+.ghost-btn:hover,
+.icon-btn:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.attachments {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.attachments:empty {
+  margin: 0;
+}
+
+.attachment {
+  position: relative;
+  width: 66px;
+  height: 66px;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+
+.attachment img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.attachment button {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  background: rgba(0, 0, 0, 0.65);
+  border-radius: 6px;
+  padding: 0 5px;
+  font-size: 12px;
+}
+
+.drop-hint {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(79, 140, 255, 0.12);
+  border: 2px dashed var(--accent);
+  font-size: 18px;
+  pointer-events: none;
+}
+
+.hidden {
+  display: none;
+}
+
+.empty {
+  color: var(--muted);
+  padding: 24px;
+  text-align: center;
+  font-size: 13px;
+}
