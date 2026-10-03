@@ -101,6 +101,14 @@ body {
   padding: 4px 8px;
 }
 
+/* Make the collapse control easy to find: it is the only way to bring the
+   session panels back once they are gone. */
+#sidebar-toggle:hover,
+#app.sidebar-collapsed #sidebar-toggle {
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+}
+
 .pane {
   background: var(--bg-pane);
   border-right: 1px solid var(--border);

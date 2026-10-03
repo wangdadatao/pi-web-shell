@@ -612,8 +612,15 @@ function initSidebar() {
     // ignore
   }
   if (collapsed) setSidebar(true);
-  el.sidebarToggle.onclick = () =>
-    setSidebar(!document.getElementById("app").classList.contains("sidebar-collapsed"));
+  const app = document.getElementById("app");
+  el.sidebarToggle.onclick = () => setSidebar(!app.classList.contains("sidebar-collapsed"));
+  // Cmd/Ctrl+B mirrors the editor convention for toggling side panels.
+  window.addEventListener("keydown", (event) => {
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "b") {
+      event.preventDefault();
+      setSidebar(!app.classList.contains("sidebar-collapsed"));
+    }
+  });
 }
 
 function renderFolders() {

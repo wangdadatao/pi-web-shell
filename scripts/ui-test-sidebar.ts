@@ -215,7 +215,19 @@ async function main(): Promise<void> {
     ok(w4 >= 200, `expand restores folders pane (width ${w4})`);
     ok((await evalJs(`localStorage.getItem("piShellSidebar")`)) === "1", "localStorage remembers expanded");
 
-    // 8) no page errors during the whole cycle
+    // 8) Cmd/Ctrl+B keyboard shortcut toggles too
+    await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", modifiers: 4, key: "b", code: "KeyB", windowsVirtualKeyCode: 66 });
+    await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", modifiers: 4, key: "b", code: "KeyB", windowsVirtualKeyCode: 66 });
+    await sleep(200);
+    const w5 = Number(await evalJs(`document.getElementById("folders").getBoundingClientRect().width`));
+    ok(w5 < 5, `Cmd/Ctrl+B collapses (width ${w5})`);
+    await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", modifiers: 4, key: "b", code: "KeyB", windowsVirtualKeyCode: 66 });
+    await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", modifiers: 4, key: "b", code: "KeyB", windowsVirtualKeyCode: 66 });
+    await sleep(200);
+    const w6 = Number(await evalJs(`document.getElementById("folders").getBoundingClientRect().width`));
+    ok(w6 >= 200, `Cmd/Ctrl+B expands (width ${w6})`);
+
+    // 9) no page errors during the whole cycle
     ok(pageErrors.length === 0, `no page exceptions (got ${pageErrors.length}${pageErrors.length ? ": " + pageErrors[0] : ""})`);
 
     cdp.close();
