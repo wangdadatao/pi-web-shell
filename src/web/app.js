@@ -197,12 +197,41 @@ marked.use({
         `</div>`
       );
     },
+    image({ href, title, text }) {
+      const alt = esc(text || "");
+      const titleAttr = title ? ` title="${esc(title)}"` : "";
+      const local = localImageSrc(href);
+      if (!local) return `<img src="${esc(href || "")}" alt="${alt}"${titleAttr} />`;
+      return `<img src="${esc(local)}" alt="${alt}"${titleAttr} class="md-img-local" loading="lazy" decoding="async" />`;
+    },
   },
 });
 
 /** Render literal text (tool output, thinking) without Markdown interpretation. */
 function renderPlain(text) {
   return `<div class="plain">${esc(text)}</div>`;
+}
+
+/**
+ * Recognize a local filesystem path in a Markdown image href.
+ *
+ * The model cannot attach images to a reply, but it can write
+ * `![alt](/abs/path.png)` (see the image-gen skill). Those bytes are streamed
+ * from /api/local-image, which only ever serves sniffed image files. Anything
+ * else (http(s), data:, relative) is left for DOMPurify to judge as-is.
+ */
+function localImageSrc(href) {
+  const raw = String(href ?? "").trim();
+  let path = null;
+  if (raw.startsWith("file://")) {
+    path = raw.slice("file://".length);
+    if (!path.startsWith("/")) path = `/${path}`;
+  } else if (raw.startsWith("~/") && state.home) {
+    path = state.home + raw.slice(1);
+  } else if (raw.startsWith("/") && !raw.startsWith("/api/")) {
+    path = raw;
+  }
+  return path ? `/api/local-image?path=${encodeURIComponent(path)}` : null;
 }
 
 function renderBlock(block) {
@@ -1080,6 +1109,13 @@ async function handleMessagesClick(event) {
     return;
   }
 
+  // Markdown images render at column width; open the full-size file on click.
+  const mdImage = event.target.closest("img.md-img-local");
+  if (mdImage) {
+    window.open(mdImage.src, "_blank", "noopener");
+    return;
+  }
+
   const button = event.target.closest(".copy-btn");
   if (!button) return;
   const kind = button.dataset.copy;
@@ -1420,4 +1456,6 @@ globalThis.piShellDebug = {
   fmtTokens,
   fmtCost,
   messageText,
+  renderMarkdown,
+  localImageSrc,
 };

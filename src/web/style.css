@@ -534,6 +534,16 @@ body {
   margin: 9px 0;
 }
 
+/* Inline images from assistant Markdown (local paths via /api/local-image). */
+.md img {
+  max-width: 100%;
+  border-radius: 8px;
+}
+
+.md img.md-img-local {
+  cursor: zoom-in;
+}
+
 .md h1,
 .md h2,
 .md h3,

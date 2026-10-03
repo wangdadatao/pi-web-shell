@@ -198,6 +198,7 @@
 
 ## M2 下一步
 
+- [x] pi 发图：模型不能附图，改为正文 Markdown 引用本地图（`![alt](/abs/path.png)`、`file://`、`~/` 三种写法），新增 `GET /api/local-image` 代理——魔数嗅探只放行 PNG/JPEG/GIF/WEBP（不是任意文件读接口），ETag+mtime 缓存；image-gen skill 补充内联展示约定 — 验证：单测 31/31（sniff/扩展名伪装/相对路径 400/缺失 404）；curl 端到端（200+字节一致、txt 与 /etc/passwd 均 415、If-None-Match 304、URL 编码路径）；CDP 断言三种写法均重写为 `/api/local-image?path=`、外链不动、`md-img-local` 穿过 DOMPurify、图片在页面内真实解码（naturalWidth=1）
 - [ ] 分支树可视化（`get_tree` / `fork` / `clone`）
 - [ ] 把 UI 断言固定成 `npm run ui:test`（目前靠 `npm run shot ... --eval` 手跑）
 - [ ] 多会话同屏 / 标签页
