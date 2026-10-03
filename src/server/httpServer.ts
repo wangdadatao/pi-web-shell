@@ -6,7 +6,9 @@ import { createGzip, constants as zlibConstants } from "node:zlib";
 import { extname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Config } from "./config.ts";
+import { isHostAllowed } from "./hostCheck.ts";
 import { ImageStore, isImageHash, stripInlineImages } from "./imageStore.ts";
+import { loadLocalImage } from "./localImage.ts";
 import { normalizeSessionKey } from "./paths.ts";
 import type { SessionIndex } from "./sessionIndex.ts";
 import type { ManagedSession, SessionRegistry } from "./sessionRegistry.ts";
@@ -47,11 +49,21 @@ export function createApp(deps: ServerDeps): Server {
 
   return createServer(async (req, res) => {
     try {
+      // DNS-rebinding guard: on a loopback bind, only loopback Host headers
+      // may talk to us. Checked before any route does work.
+      if (!isHostAllowed(req.headers.host, config.host)) {
+        return sendJson(res, 403, { error: "Forbidden Host header" });
+      }
+
       const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
       const route = `${req.method ?? "GET"} ${url.pathname}`;
 
       if (url.pathname.startsWith("/api/image/")) {
         return serveImage(res, images, url.pathname.slice("/api/image/".length));
+      }
+
+      if (route === "GET /api/local-image") {
+        return serveLocalImage(req, res, url);
       }
 
       if (route === "GET /api/sessions") {
@@ -505,6 +517,33 @@ function serveImage(res: ServerResponse, images: ImageStore, hash: string): void
     "Cache-Control": "public, max-age=31536000, immutable",
   });
   res.end(image.buffer);
+}
+
+/**
+ * Stream a local image referenced from assistant Markdown (`![alt](/abs/x.png)`).
+ *
+ * Validation and magic-byte sniffing live in localImage.ts; only actual image
+ * bytes can come out of this endpoint, so it never becomes a file read API.
+ */
+async function serveLocalImage(req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
+  const result = await loadLocalImage(url.searchParams.get("path") ?? "");
+  if (!result.ok) return sendJson(res, result.status, { error: result.error });
+
+  if (req.headers["if-none-match"] === result.etag) {
+    res.writeHead(304, { ETag: result.etag });
+    res.end();
+    return;
+  }
+
+  res.writeHead(200, {
+    "Content-Type": result.mimeType,
+    "Content-Length": String(result.buffer.length),
+    ETag: result.etag,
+    // ETag revalidation is cheap; max-age is capped so a file rewritten in
+    // place (same path, new bytes) is not stuck stale for a year.
+    "Cache-Control": "private, max-age=3600",
+  });
+  res.end(result.buffer);
 }
 
 async function getState(rpc: { send: <T>(c: Record<string, unknown>) => Promise<T> }): Promise<PiSessionState> {

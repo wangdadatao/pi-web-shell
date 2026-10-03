@@ -2,6 +2,8 @@
 
 一个跑在本地的 **Web 外壳**，包在官方 [`pi`](https://github.com/earendil-works/pi) 之上。
 
+> 非官方社区项目，与 pi 官方（earendil-works）无关。pi 只是它驱动的 coding agent。
+
 用来替代「开一堆终端」：一个页面里按文件夹浏览历史会话、继续对话、流式看回复、直接贴图。
 它启动的就是你 PATH 里的那个 `pi`，所以模型、密钥、`AGENTS.md`、skills、历史会话全部原样复用。
 
@@ -90,9 +92,9 @@ npm run plan         # 查看 docs/PLAN.md 的进度和下一项
 这个壳必须拿到宿主机的三样东西：`pi` 命令、`~/.pi/agent`（auth / models / 会话），
 以及**项目目录的原始绝对路径**（会话里的 `cwd` 直接拿去当工作目录）。容器里做到这些要：
 
-- 把 `/Users/you` 整个挂进去（那隔离就没了）
-- 把 `models.json` 里的 `http://localhost:3000/v1` 改成 `host.docker.internal:3000`
-  （或加入 new-api 所在的网络），所以得额外维护一份容器专用配置
+- 把家目录整个挂进去（那隔离就没了）
+- `models.json` 里指向本机网关的 `http://localhost:<port>/v1` 得改成
+  `host.docker.internal:<port>`（或加入网关所在的网络），所以得额外维护一份容器专用配置
 - 在镜像里装齐 `mvn` / `java` / `python3` / `git`，否则 pi 的工具在容器里**跑不了构建和测试**
 
 换句话说：Docker 能跑，但你要先把它的好处拆掉才能用。只想“重启不用手动开”，
@@ -120,6 +122,10 @@ npm run shot -- <url> <out.png> --wait 6000 \
 - **运行时零依赖**：服务端只用 Node 内置模块；前端第三方库 vendor 进仓库，无构建步骤。
 - **只读历史**：列出会话只读文件头尾，不修改任何已有会话。
 - **不可信渲染**：模型输出、工具输出、文件内容全部先过 `DOMPurify` 再上屏；工具输出不做 Markdown 解释。
+- **本地安全边界**：默认只绑 `127.0.0.1`，并校验 Host 头（拒绝 DNS rebinding）；见 `src/server/hostCheck.ts`。
+
+本项目基于 MIT 协议开源（见 [LICENSE](LICENSE)）。前端 vendored 库的许可证见
+[`src/web/vendor/README.md`](src/web/vendor/README.md)。
 
 细节见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)，进度与待办见 [`docs/PLAN.md`](docs/PLAN.md)。
 

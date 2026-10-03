@@ -1,8 +1,8 @@
 {
   "name": "pi-web-shell",
   "version": "0.1.0",
-  "private": true,
   "type": "module",
+  "license": "MIT",
   "description": "A local web shell for the pi coding agent: multi-folder sessions, history, streaming, and image input.",
   "engines": {
     "node": ">=22.19.0"

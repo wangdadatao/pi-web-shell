@@ -37,7 +37,7 @@
 
 ## M1.3 新建会话（已完成）
 
-- [x] 文件夹列表用 `~` 表示家目录：`/Users/you` 之前被渲染成 `Users/you`，看起来像不存在 — 验证：DOM 断言该条目 label = `~`
+- [x] 文件夹列表用 `~` 表示家目录：家目录路径之前被渲染成 `Users/<you>`，看起来像不存在 — 验证：DOM 断言该条目 label = `~`
 - [x] 会话面板 `＋`：在当前选中的文件夹新建会话 — 验证：UI 点按后出现待建条目
 - [x] 文件夹面板 `＋`：输入任意绝对路径新建（新文件夹也会出现在列表，即使尚未落盘）— 验证：`…/tmp/pi-ui-new` 出现在文件夹列表
 - [x] 待建会话：文件未落盘时也能打开流、发消息 — 验证：快照 messages=0、无错误、状态 idle
@@ -60,7 +60,7 @@
 
 - [x] LaunchAgent 安装/卸载/状态/重启四个子命令，写 plist 并 bootstrap — 验证：`npm run service:install` 成功，plist 落在 `~/Library/LaunchAgents/dev.pi-web-shell.plist`
 - [x] 登录自启 + 崩溃自愈 — 验证：`kill -9` 后 launchd 自动拉起新 pid（90004 → 90450），`state = running`
-- [x] 不写死 Node 版本：启动脚本 source `nvm.sh` + 用 `alias/default` 兜底 — 验证：日志里解析到 `/Users/you/.nvm/versions/node/v22.22.3/bin/node`
+- [x] 不写死 Node 版本：启动脚本 source `nvm.sh` + 用 `alias/default` 兜底 — 验证：日志里解析到 `~/.nvm/versions/node/v22.22.3/bin/node`
 - [x] launchd 精简 PATH 下仍能找到并 spawn `pi` — 验证：服务进程下打开会话流，快照正常返回 34 条消息
 - [x] 服务模式关闭浏览器自动弹出 — 验证：plist 中 `PI_SHELL_OPEN_BROWSER=0`
 - [x] 端口被占用时给可操作提示（提示改用 `service:restart`）— 验证：`npm start` 输出提示并非堆栈
@@ -142,7 +142,7 @@
 - [x] 仅 `PI_SHELL_SESSIONS_DIR`（pi 不认识的 web 专属开关）仍需 `--session-dir` 钉住目录；
   与 pi 自己的默认目录相同时也不传 — 验证：单测覆盖三种 env 组合
 - [x] 修复历史遗留：一条 web 建出来的会话文件平铺在 sessions 根目录，移回
-  `--Users-you-aiwork--/` 后 `/resume` 可见 — 验证：`SessionManager.list('/Users/you/aiwork')` 命中
+  `--Users-<you>-aiwork--/` 后 `/resume` 可见 — 验证：`SessionManager.list('~/aiwork')` 命中
 
 ## M2.1 模型 / 思考等级切换（已完成）
 
@@ -239,3 +239,10 @@ P3 — 代码质量 / 小问题（可攒着一起清）：
 - [ ] 会话标题最多读文件头 256KB；极端情况下首条用户消息超出则回退为占位标题
 - [ ] 未处理 RPC 的扩展 UI 对话框（`extension_ui_request`），目前忽略
 - [ ] 单用户单浏览器假设，未做多客户端并发写入保护
+
+## M2.6 开源准备（2026-10-03）
+
+- [x] LICENSE（MIT）+ package.json 去 `private`、加 `license: MIT` — 验证：文件落仓库
+- [x] Host 头校验防 DNS rebinding：新增 `src/server/hostCheck.ts`（仅 loopback 绑定时启用，非 loopback 绑定视为显式放弃本地模型跳过），httpServer 入口统一拦截 — 验证：单测 7 例；隔离环境实测 `Host: evil.com` / `127.0.0.1.evil.com` → 403，正常 / `localhost` / `[::1]:port` → 200；常驻服务 `service:restart` 后 4711 正常 200
+- [x] README 脱敏：网关描述泛化（去项目名与具体端口）、加非官方声明、加 MIT/LICENSE 与 vendored 许可证指引 — 验证：grep 全仓库网关项目名零命中；docs/PLAN 历史验证行中的真实家目录路径同步泛化
+- [x] vendored 库许可证清单写进 `scripts/vendor.ts` 生成器（marked MIT / DOMPurify Apache-2.0 OR MPL-2.0 / Prism MIT，文件头声明保留） — 验证：`npm run vendor` 再生成 README 含清单，25/25 测试过
