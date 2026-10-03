@@ -170,62 +170,103 @@ async function main(): Promise<void> {
       (await cdp.send<{ result: { value?: unknown } }>("Runtime.evaluate", { expression, returnByValue: true }))
         .result?.value;
 
+    const clickToggle = () => cdp.send("Runtime.evaluate", { expression: `document.getElementById("sidebar-toggle").click()` });
+    const pressCmdB = async () => {
+      await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", modifiers: 4, key: "b", code: "KeyB", windowsVirtualKeyCode: 66 });
+      await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", modifiers: 4, key: "b", code: "KeyB", windowsVirtualKeyCode: 66 });
+      await sleep(250);
+    };
+    const sidebar = () => evalJs(`document.getElementById("app").dataset.sidebar`);
+    const paneW = (id: string) => evalJs(`document.getElementById("${id}").getBoundingClientRect().width`);
+    // Which header hosts the toggle now, and how far it sits from the left edge.
+    const toggleHome = async () => {
+      const info = (await evalJs(`(() => {
+        const b = document.getElementById("sidebar-toggle");
+        const host = b.closest("aside")?.id || (b.closest("#chat-head") ? "chat-head" : "?");
+        return { host, x: Math.round(b.getBoundingClientRect().x) };
+      })()`)) as { host: string; x: number };
+      return info;
+    };
+
     // The app auto-opens the first session; a live SSE stream must survive the
     // collapse cycle below, so remember whether one is up.
     const hadStream = await evalJs(`!!window.piShellDebug?.state?.stream`);
     console.log(`INFO: SSE stream open on load: ${hadStream}`);
 
-    // 1) toggle + crumb elements exist
+    // 1) toggle exists, the old breadcrumb is gone
     ok(await evalJs(`!!document.getElementById("sidebar-toggle")`), "toggle button exists");
-    ok(await evalJs(`!!document.getElementById("sidebar-crumb")`), "breadcrumb element exists");
+    ok(await evalJs(`!document.getElementById("sidebar-crumb")`), "breadcrumb removed");
 
-    // 2) default expanded
-    const w0 = Number(await evalJs(`document.getElementById("folders").getBoundingClientRect().width`));
-    ok(w0 >= 200, `expanded: folders pane width ${w0} >= 200`);
+    // 2) default full: both panes visible, toggle in the folders head at the top-left
+    const w0f = Number(await paneW("folders"));
+    const w0s = Number(await paneW("sessions"));
+    ok(w0f >= 200 && w0s >= 200, `full: pane widths ${w0f}/${w0s}`);
+    let t = await toggleHome();
+    ok(t.host === "folders" && t.x <= 24, `full: toggle in folders head, top-left (${t.host}, x=${t.x})`);
+    ok((await evalJs(`document.getElementById("sidebar-toggle").title`)) === "收起文件夹栏（⌘B）", "tooltip names the next stage");
 
-    // 3) collapse
-    await cdp.send("Runtime.evaluate", { expression: `document.getElementById("sidebar-toggle").click()` });
-    await sleep(200);
-    const w1 = Number(await evalJs(`document.getElementById("folders").getBoundingClientRect().width`));
-    const w2 = Number(await evalJs(`document.getElementById("sessions").getBoundingClientRect().width`));
+    // 3) click 1 → sessions only (folders pane collapses, sessions stay)
+    await clickToggle();
+    await sleep(250);
+    ok((await sidebar()) === "no-folders", "click 1 → no-folders");
+    ok(Number(await paneW("folders")) < 5 && Number(await paneW("sessions")) >= 200, `no-folders: folders ~0, sessions kept (${await paneW("sessions")})`);
+    t = await toggleHome();
+    ok(t.host === "sessions" && t.x <= 24, `no-folders: toggle docked to sessions head (${t.host}, x=${t.x})`);
+
+    // 4) click 2 → fullscreen (both panes gone, chat fills the viewport)
+    await clickToggle();
+    await sleep(250);
+    ok((await sidebar()) === "fullscreen", "click 2 → fullscreen");
+    ok(Number(await paneW("folders")) < 5 && Number(await paneW("sessions")) < 5, "fullscreen: both panes ~0");
     const cw = Number(await evalJs(`document.getElementById("chat").getBoundingClientRect().width`));
     const vw = Number(await evalJs(`window.innerWidth`));
-    ok(w1 < 5 && w2 < 5, `collapsed: pane widths ${w1}/${w2} ~ 0`);
-    ok(Math.abs(cw - vw) < 5, `collapsed: chat fills viewport (${cw} of ${vw})`);
+    ok(Math.abs(cw - vw) < 5, `fullscreen: chat fills viewport (${cw} of ${vw})`);
+    t = await toggleHome();
+    ok(t.host === "chat-head" && t.x <= 24, `fullscreen: toggle docked to chat head top-left (${t.host}, x=${t.x})`);
 
-    // 4) breadcrumb shows the current folder
-    const crumb = String(await evalJs(`document.getElementById("sidebar-crumb").textContent`));
-    ok(crumb.length > 0, `breadcrumb shows location: "${crumb}"`);
+    // 5) click 3 → full again (the cycle wraps)
+    await clickToggle();
+    await sleep(250);
+    ok((await sidebar()) === "full" && Number(await paneW("folders")) >= 200, "click 3 → full (cycle wraps)");
+    t = await toggleHome();
+    ok(t.host === "folders", "toggle back in the folders head");
 
-    // 5) the live stream survived the collapse
+    // 6) ⌘B jumps straight between full and fullscreen, skipping the middle stage
+    await pressCmdB();
+    ok((await sidebar()) === "fullscreen", "⌘B from full → fullscreen");
+    await pressCmdB();
+    ok((await sidebar()) === "full", "⌘B returns to the previous state (full)");
+
+    // 7) ⌘B remembers the intermediate stage as the restore point
+    await clickToggle(); // → no-folders
+    await sleep(250);
+    await pressCmdB(); // → fullscreen
+    ok((await sidebar()) === "fullscreen", "⌘B from no-folders → fullscreen");
+    await pressCmdB(); // → no-folders
+    ok((await sidebar()) === "no-folders", "⌘B restores no-folders, not full");
+
+    // 8) the live stream survived the whole cycle
     if (hadStream) {
-      ok(await evalJs(`!!window.piShellDebug?.state?.stream`), "SSE stream alive after collapse");
+      ok(await evalJs(`!!window.piShellDebug?.state?.stream`), "SSE stream alive after cycle");
     }
 
-    // 6) persistence across reload
+    // 9) persistence across reload (currently no-folders)
     await cdp.send("Page.navigate", { url: BASE });
     await sleep(2000);
-    const w3 = Number(await evalJs(`document.getElementById("folders").getBoundingClientRect().width`));
-    ok(w3 < 5, `persisted: still collapsed after reload (width ${w3})`);
+    ok((await sidebar()) === "no-folders" && Number(await paneW("sessions")) >= 200, "persisted: no-folders after reload");
+    ok((await evalJs(`localStorage.getItem("piShellSidebar")`)) === "no-folders", "localStorage stores the stage");
+    ok((await evalJs(`localStorage.getItem("piShellSidebarLast")`)) === "no-folders", "localStorage stores last-expanded");
 
-    // 7) expand restores
-    await cdp.send("Runtime.evaluate", { expression: `document.getElementById("sidebar-toggle").click()` });
-    await sleep(200);
-    const w4 = Number(await evalJs(`document.getElementById("folders").getBoundingClientRect().width`));
-    ok(w4 >= 200, `expand restores folders pane (width ${w4})`);
-    ok((await evalJs(`localStorage.getItem("piShellSidebar")`)) === "1", "localStorage remembers expanded");
-
-    // 8) Cmd/Ctrl+B keyboard shortcut toggles too
-    await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", modifiers: 4, key: "b", code: "KeyB", windowsVirtualKeyCode: 66 });
-    await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", modifiers: 4, key: "b", code: "KeyB", windowsVirtualKeyCode: 66 });
-    await sleep(200);
-    const w5 = Number(await evalJs(`document.getElementById("folders").getBoundingClientRect().width`));
-    ok(w5 < 5, `Cmd/Ctrl+B collapses (width ${w5})`);
-    await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", modifiers: 4, key: "b", code: "KeyB", windowsVirtualKeyCode: 66 });
-    await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", modifiers: 4, key: "b", code: "KeyB", windowsVirtualKeyCode: 66 });
-    await sleep(200);
-    const w6 = Number(await evalJs(`document.getElementById("folders").getBoundingClientRect().width`));
-    ok(w6 >= 200, `Cmd/Ctrl+B expands (width ${w6})`);
+    // 10) legacy two-state value "0" migrates to fullscreen
+    await evalJs(`localStorage.setItem("piShellSidebar", "0")`);
+    await cdp.send("Page.navigate", { url: BASE });
+    await sleep(2000);
+    ok((await sidebar()) === "fullscreen", `legacy "0" migrates to fullscreen`);
+    t = await toggleHome();
+    ok(t.host === "chat-head" && t.x <= 24, `after migration toggle in chat head (${t.host}, x=${t.x})`);
+    await clickToggle(); // fullscreen → full, leave the profile expanded
+    await sleep(250);
+    ok((await sidebar()) === "full", "click from fullscreen expands to full");
 
     // 9) no page errors during the whole cycle
     ok(pageErrors.length === 0, `no page exceptions (got ${pageErrors.length}${pageErrors.length ? ": " + pageErrors[0] : ""})`);

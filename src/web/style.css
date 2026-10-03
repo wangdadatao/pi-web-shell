@@ -67,32 +67,23 @@ body {
   transition: grid-template-columns 0.18s ease-out;
 }
 
-/* Collapsed sidebar: both panes shrink to zero. The panes hide their own
-   border and content overflow so the edge is clean while animating. */
-#app.sidebar-collapsed {
+/* Three-stage sidebar: full → sessions-only → fullscreen. The toggle button
+   lives in the head of whichever pane is leftmost (JS moves it there), so it
+   collapses and expands in the same top-left spot. */
+#app[data-sidebar="no-folders"] {
+  grid-template-columns: 0 280px 1fr;
+}
+
+#app[data-sidebar="fullscreen"] {
   grid-template-columns: 0 0 1fr;
 }
 
-#app.sidebar-collapsed .pane {
+#app[data-sidebar="no-folders"] #folders,
+#app[data-sidebar="fullscreen"] .pane {
   border-right: none;
   overflow: hidden;
   opacity: 0;
   pointer-events: none;
-}
-
-.crumb {
-  display: none;
-  max-width: 320px;
-  font-size: 12px;
-  color: var(--muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* Only meaningful once the side panels are gone; the button flips its glyph. */
-#app.sidebar-collapsed .crumb {
-  display: inline-block;
 }
 
 #sidebar-toggle {
@@ -101,10 +92,10 @@ body {
   padding: 4px 8px;
 }
 
-/* Make the collapse control easy to find: it is the only way to bring the
-   session panels back once they are gone. */
+/* Make the collapse control easy to find: in fullscreen it is the only way
+   to bring the session panels back. */
 #sidebar-toggle:hover,
-#app.sidebar-collapsed #sidebar-toggle {
+#app[data-sidebar="fullscreen"] #sidebar-toggle {
   background: var(--bg-raised);
   border: 1px solid var(--border);
 }
@@ -130,6 +121,10 @@ body {
   border-bottom: 1px solid var(--border);
   gap: 8px;
   flex-shrink: 0;
+}
+
+.pane-head > span {
+  margin-right: auto;
 }
 
 .head-actions {

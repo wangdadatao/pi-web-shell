@@ -130,7 +130,6 @@ const el = {
   thinkingSelect: document.getElementById("thinking-select"),
   dropHint: document.getElementById("drop-hint"),
   sidebarToggle: document.getElementById("sidebar-toggle"),
-  sidebarCrumb: document.getElementById("sidebar-crumb"),
 };
 
 const state = {
@@ -582,43 +581,79 @@ function relativeTime(iso) {
 // ---------------------------------------------------------------- sidebar
 
 const SIDEBAR_KEY = "piShellSidebar";
+const SIDEBAR_LAST_KEY = "piShellSidebarLast";
 
-/** Current folder (or selected session's folder) shown while collapsed. */
-function updateSidebarCrumb() {
-  const parts = [];
-  if (state.cwd) parts.push(shortPath(state.cwd));
-  const current = state.sessions.find((s) => s.path === state.path);
-  if (current) parts.push(current.title);
-  el.sidebarCrumb.textContent = parts.join(" / ");
-  el.sidebarCrumb.title = parts.join(" / ");
+/** full → no-folders → fullscreen → full … */
+const SIDEBAR_STATES = ["full", "no-folders", "fullscreen"];
+
+const SIDEBAR_NEXT_ACTION = {
+  full: "收起文件夹栏",
+  "no-folders": "收起侧栏",
+  fullscreen: "展开侧栏",
+};
+
+let sidebarState = "full";
+/** Most recent non-fullscreen state; ⌘B returns to it from fullscreen. */
+let sidebarLastExpanded = "full";
+
+/**
+ * The toggle always sits at the top-left of the leftmost visible pane, so it
+ * collapses and expands in the same place — inside the pane it controls.
+ */
+function placeSidebarToggle() {
+  const host =
+    sidebarState === "full"
+      ? document.querySelector("#folders .pane-head")
+      : sidebarState === "no-folders"
+        ? document.querySelector("#sessions .pane-head")
+        : document.getElementById("chat-head");
+  host.prepend(el.sidebarToggle);
 }
 
-function setSidebar(collapsed) {
-  document.getElementById("app").classList.toggle("sidebar-collapsed", collapsed);
-  el.sidebarToggle.textContent = collapsed ? "»" : "‹";
-  el.sidebarToggle.title = collapsed ? "展开侧栏" : "折叠侧栏";
+function applySidebar(state) {
+  sidebarState = state;
+  document.getElementById("app").dataset.sidebar = state;
+  el.sidebarToggle.textContent = state === "fullscreen" ? "»" : "‹";
+  el.sidebarToggle.title = `${SIDEBAR_NEXT_ACTION[state]}（⌘B）`;
+  placeSidebarToggle();
+}
+
+function setSidebar(next) {
+  if (!SIDEBAR_STATES.includes(next) || next === sidebarState) return;
+  applySidebar(next);
+  if (next !== "fullscreen") sidebarLastExpanded = next;
   try {
-    localStorage.setItem(SIDEBAR_KEY, collapsed ? "0" : "1");
+    localStorage.setItem(SIDEBAR_KEY, next);
+    if (next !== "fullscreen") localStorage.setItem(SIDEBAR_LAST_KEY, next);
   } catch {
     // Private mode etc. — the toggle still works, just not remembered.
   }
 }
 
 function initSidebar() {
-  let collapsed = false;
+  let stored = null;
+  let last = null;
   try {
-    collapsed = localStorage.getItem(SIDEBAR_KEY) === "0";
+    stored = localStorage.getItem(SIDEBAR_KEY);
+    last = localStorage.getItem(SIDEBAR_LAST_KEY);
   } catch {
     // ignore
   }
-  if (collapsed) setSidebar(true);
-  const app = document.getElementById("app");
-  el.sidebarToggle.onclick = () => setSidebar(!app.classList.contains("sidebar-collapsed"));
-  // Cmd/Ctrl+B mirrors the editor convention for toggling side panels.
+  // Legacy two-state value: "1" expanded, "0" collapsed.
+  if (stored === "1" || stored === "0") stored = stored === "0" ? "fullscreen" : "full";
+  sidebarLastExpanded = last === "no-folders" ? last : "full";
+  applySidebar(SIDEBAR_STATES.includes(stored) ? stored : "full");
+
+  el.sidebarToggle.onclick = () => {
+    const index = SIDEBAR_STATES.indexOf(sidebarState);
+    setSidebar(SIDEBAR_STATES[(index + 1) % SIDEBAR_STATES.length]);
+  };
+  // Cmd/Ctrl+B jumps straight to fullscreen and back — it never enters the
+  // intermediate stage, so the shortcut can't surprise you.
   window.addEventListener("keydown", (event) => {
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "b") {
       event.preventDefault();
-      setSidebar(!app.classList.contains("sidebar-collapsed"));
+      setSidebar(sidebarState === "fullscreen" ? sidebarLastExpanded : "fullscreen");
     }
   });
 }
@@ -649,7 +684,6 @@ function renderFolders() {
 function renderSessions() {
   const list = state.sessions.filter((s) => s.cwd === state.cwd);
   el.sessionsTitle.textContent = state.cwd ? shortPath(state.cwd) : "会话";
-  updateSidebarCrumb();
   el.sessionList.innerHTML = "";
   if (!state.cwd) {
     el.sessionList.innerHTML = `<div class="empty">选择左侧文件夹</div>`;
