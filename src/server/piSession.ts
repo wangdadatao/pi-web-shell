@@ -43,6 +43,19 @@ interface Pending {
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
 
 /**
+ * Context every web-shell child carries, via `--append-system-prompt`.
+ *
+ * CLI sessions never see this: the flag is passed only by our spawn, so the
+ * rule stays scoped to the web UI and versioned next to the feature it
+ * documents (/api/local-image). Keep it short and behavioral.
+ */
+const WEB_CONTEXT_PROMPT = [
+  "你正运行在 pi-web-shell（本地 Web 界面）中。",
+  "想让用户直接看到本地图片文件时，在回复正文里用 ![描述](/绝对/路径.png) 内联展示（~/ 与 file:// 路径亦可），图片会直接渲染，用户可点击查看原图。",
+  "仅内联面向用户的成品图片；中间产物给出文件路径即可。",
+].join("\n");
+
+/**
  * A single `pi --mode rpc` child process.
  *
  * Speaks the documented RPC protocol: one JSON object per line on stdin and
@@ -72,6 +85,7 @@ export class PiRpcSession {
     const args = [...(this.options.extraArgs ?? []), "--mode", "rpc"];
     if (this.options.sessionDirArg) args.push("--session-dir", this.options.sessionDirArg);
     if (this.options.sessionPath) args.push("--session", this.options.sessionPath);
+    args.push("--append-system-prompt", WEB_CONTEXT_PROMPT);
 
     const child = spawn(this.options.bin, args, {
       cwd: this.options.cwd,

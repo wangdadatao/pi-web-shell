@@ -198,7 +198,8 @@
 
 ## M2 下一步
 
-- [x] pi 发图：模型不能附图，改为正文 Markdown 引用本地图（`![alt](/abs/path.png)`、`file://`、`~/` 三种写法），新增 `GET /api/local-image` 代理——魔数嗅探只放行 PNG/JPEG/GIF/WEBP（不是任意文件读接口），ETag+mtime 缓存；image-gen skill 补充内联展示约定 — 验证：单测 31/31（sniff/扩展名伪装/相对路径 400/缺失 404）；curl 端到端（200+字节一致、txt 与 /etc/passwd 均 415、If-None-Match 304、URL 编码路径）；CDP 断言三种写法均重写为 `/api/local-image?path=`、外链不动、`md-img-local` 穿过 DOMPurify、图片在页面内真实解码（naturalWidth=1）
+- [x] Web 会话注入端专属规则：spawn 时统一带 `--append-system-prompt`（仅 web 子进程携带，CLI 不受影响），告知「本地图片用 ![描述](/绝对/路径.png) 内联」；同时把上一条补在 image-gen SKILL.md 里的展示规则撤回，单一事实源随代码走 — 验证：隔离环境新会话问「展示 dog.png」，模型主动回 `![dog.png](/绝对路径)`；会话文件 system 消息含注入文本（resume 会重放）；浏览器渲染为 /api/local-image 且真实解码；typecheck + 单测 31/31
+- [x] pi 发图：模型不能附图，改为正文 Markdown 引用本地图（`![alt](/abs/path.png)`、`file://`、`~/` 三种写法），新增 `GET /api/local-image` 代理——魔数嗅探只放行 PNG/JPEG/GIF/WEBP（不是任意文件读接口），ETag+mtime 缓存 — 验证：单测 31/31（sniff/扩展名伪装/相对路径 400/缺失 404）；curl 端到端（200+字节一致、txt 与 /etc/passwd 均 415、If-None-Match 304、URL 编码路径）；CDP 断言三种写法均重写为 `/api/local-image?path=`、外链不动、`md-img-local` 穿过 DOMPurify、图片在页面内真实解码（naturalWidth=1）
 - [ ] 分支树可视化（`get_tree` / `fork` / `clone`）
 - [ ] 把 UI 断言固定成 `npm run ui:test`（目前靠 `npm run shot ... --eval` 手跑）
 - [ ] 多会话同屏 / 标签页
