@@ -59,18 +59,46 @@ body {
 #app {
   display: grid;
   grid-template-columns: 240px 280px 1fr;
-  height: 100vh;
-  overflow: hidden;
-}
-
-#app {
-  display: grid;
-  grid-template-columns: 240px 280px 1fr;
   /* minmax(0, 1fr) keeps panes from growing to their content height, which
      would push the composer out of the viewport and break scrolling. */
   grid-template-rows: minmax(0, 1fr);
   height: 100vh;
   overflow: hidden;
+  transition: grid-template-columns 0.18s ease-out;
+}
+
+/* Collapsed sidebar: both panes shrink to zero. The panes hide their own
+   border and content overflow so the edge is clean while animating. */
+#app.sidebar-collapsed {
+  grid-template-columns: 0 0 1fr;
+}
+
+#app.sidebar-collapsed .pane {
+  border-right: none;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.crumb {
+  display: none;
+  max-width: 320px;
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Only meaningful once the side panels are gone; the button flips its glyph. */
+#app.sidebar-collapsed .crumb {
+  display: inline-block;
+}
+
+#sidebar-toggle {
+  font-size: 15px;
+  line-height: 1;
+  padding: 4px 8px;
 }
 
 .pane {

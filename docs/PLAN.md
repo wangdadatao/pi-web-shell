@@ -247,3 +247,11 @@ P3 — 代码质量 / 小问题（可攒着一起清）：
 - [x] Host 头校验防 DNS rebinding：新增 `src/server/hostCheck.ts`（仅 loopback 绑定时启用，非 loopback 绑定视为显式放弃本地模型跳过），httpServer 入口统一拦截 — 验证：单测 7 例；隔离环境实测 `Host: evil.com` / `127.0.0.1.evil.com` → 403，正常 / `localhost` / `[::1]:port` → 200；常驻服务 `service:restart` 后 4711 正常 200
 - [x] README 脱敏：网关描述泛化（去项目名与具体端口）、加非官方声明、加 MIT/LICENSE 与 vendored 许可证指引 — 验证：grep 全仓库网关项目名零命中；docs/PLAN 历史验证行中的真实家目录路径同步泛化
 - [x] vendored 库许可证清单写进 `scripts/vendor.ts` 生成器（marked MIT / DOMPurify Apache-2.0 OR MPL-2.0 / Prism MIT，文件头声明保留） — 验证：`npm run vendor` 再生成 README 含清单，25/25 测试过
+
+## M2.7 侧栏整体折叠（2026-10-03）
+
+- [x] chat 头部新增折叠按钮（‹/»）+ 折叠态面包屑（文件夹/会话名，title 带全路径） — 验证：CDP 断言 11 项全过（`scripts/ui-test-sidebar.ts`）
+- [x] 折叠实现：`#app.sidebar-collapsed` → `grid-template-columns: 0 0 1fr`（0.18s 过渡），pane 隐藏边框/事件；顺手合并 style.css 里重复定义的 `#app` 规则 — 验证：折叠后 folders/sessions 宽 0/0、chat 占满 1440 视口、SSE 流存活、无页面异常
+- [x] 记忆：localStorage `piShellSidebar`（默认展开），reload 后保持折叠态 — 验证：断言 reload 后宽度仍为 0
+- [x] 面包屑随 session_info_changed/rename 自动更新（走 renderSessions 公共路径） — 验证：代码路径覆盖 717/812/1275 三处标题变更点
+- 回归：typecheck 干净；31/31（含新增本地图测试）；常驻服务 restart 后正常

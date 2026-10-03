@@ -129,6 +129,8 @@ const el = {
   modelSelect: document.getElementById("model-select"),
   thinkingSelect: document.getElementById("thinking-select"),
   dropHint: document.getElementById("drop-hint"),
+  sidebarToggle: document.getElementById("sidebar-toggle"),
+  sidebarCrumb: document.getElementById("sidebar-crumb"),
 };
 
 const state = {
@@ -577,6 +579,43 @@ function relativeTime(iso) {
   return new Date(iso).toLocaleDateString();
 }
 
+// ---------------------------------------------------------------- sidebar
+
+const SIDEBAR_KEY = "piShellSidebar";
+
+/** Current folder (or selected session's folder) shown while collapsed. */
+function updateSidebarCrumb() {
+  const parts = [];
+  if (state.cwd) parts.push(shortPath(state.cwd));
+  const current = state.sessions.find((s) => s.path === state.path);
+  if (current) parts.push(current.title);
+  el.sidebarCrumb.textContent = parts.join(" / ");
+  el.sidebarCrumb.title = parts.join(" / ");
+}
+
+function setSidebar(collapsed) {
+  document.getElementById("app").classList.toggle("sidebar-collapsed", collapsed);
+  el.sidebarToggle.textContent = collapsed ? "»" : "‹";
+  el.sidebarToggle.title = collapsed ? "展开侧栏" : "折叠侧栏";
+  try {
+    localStorage.setItem(SIDEBAR_KEY, collapsed ? "0" : "1");
+  } catch {
+    // Private mode etc. — the toggle still works, just not remembered.
+  }
+}
+
+function initSidebar() {
+  let collapsed = false;
+  try {
+    collapsed = localStorage.getItem(SIDEBAR_KEY) === "0";
+  } catch {
+    // ignore
+  }
+  if (collapsed) setSidebar(true);
+  el.sidebarToggle.onclick = () =>
+    setSidebar(!document.getElementById("app").classList.contains("sidebar-collapsed"));
+}
+
 function renderFolders() {
   el.folderList.innerHTML = "";
   if (state.folders.length === 0) {
@@ -603,6 +642,7 @@ function renderFolders() {
 function renderSessions() {
   const list = state.sessions.filter((s) => s.cwd === state.cwd);
   el.sessionsTitle.textContent = state.cwd ? shortPath(state.cwd) : "会话";
+  updateSidebarCrumb();
   el.sessionList.innerHTML = "";
   if (!state.cwd) {
     el.sessionList.innerHTML = `<div class="empty">选择左侧文件夹</div>`;
@@ -1434,6 +1474,7 @@ function bind() {
 
 async function main() {
   bind();
+  initSidebar();
   await refreshSessionList();
   if (state.folders.length > 0) {
     await selectFolder(state.folders[0].cwd);
