@@ -844,6 +844,52 @@ body {
   display: block;
 }
 
+/* ------------------------------------------------------ mermaid diagrams */
+
+.mermaid-block {
+  margin: 10px 0;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.mermaid-body {
+  padding: 12px 10px;
+  background: #10141b;
+  border: 1px solid var(--border);
+  border-radius: 0 0 8px 8px;
+  overflow-x: auto;
+  text-align: center;
+}
+
+.mermaid-body svg {
+  max-width: 100%;
+  height: auto;
+}
+
+.mermaid-pending {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* A broken diagram keeps its source visible instead of collapsing to nothing. */
+.mermaid-body .mermaid-error {
+  color: var(--danger);
+  font-size: 12px;
+  text-align: left;
+  margin-bottom: 8px;
+}
+
+/* The fence body, hidden until a render fails and the source matters again. */
+.mermaid-source {
+  margin: 0;
+  border-radius: 0 0 8px 8px;
+  text-align: left;
+}
+
+.mermaid-source[hidden] {
+  display: none;
+}
+
 .copy-btn {
   background: transparent;
   border: 1px solid var(--border);

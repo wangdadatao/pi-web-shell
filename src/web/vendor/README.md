@@ -8,8 +8,13 @@ Licenses (upstream license and notice are preserved at the top of each file):
 - `marked.esm.js` — [marked](https://github.com/markedjs/marked), MIT
 - `purify.es.mjs` — [DOMPurify](https://github.com/cure53/DOMPurify), Apache-2.0 OR MPL-2.0 (dual)
 - `prism.js`, `prism-languages.js` — [Prism](https://github.com/PrismJS/prism), MIT
+- `mermaid.min.js` — [Mermaid](https://github.com/mermaid-js/mermaid), MIT
+
+`mermaid.min.js` is ~3.4 MB; it is the only vendored asset that size, and it renders
+diagrams client-side so the server stays dependency-free.
 
 - `marked.esm.js` ← `node_modules/marked/lib/marked.esm.js` (44.9 KB)
 - `purify.es.mjs` ← `node_modules/dompurify/dist/purify.es.mjs` (82.4 KB)
 - `prism.js` ← 1 files (57.0 KB)
 - `prism-languages.js` ← 13 files (29.5 KB)
+- `mermaid.min.js` ← 1 files (3488.9 KB)

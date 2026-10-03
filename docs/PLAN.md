@@ -267,3 +267,13 @@ M2.7 的一刀切折叠难用：开关在右上角、离它控制的侧栏太远
 - [x] 记忆：localStorage `piShellSidebar`（默认展开），reload 后保持折叠态 — 验证：断言 reload 后宽度仍为 0
 - [x] 面包屑随 session_info_changed/rename 自动更新（走 renderSessions 公共路径） — 验证：代码路径覆盖 717/812/1275 三处标题变更点
 - 回归：typecheck 干净；31/31（含新增本地图测试）；常驻服务 restart 后正常
+
+## M2.8 Markdown 里的 mermaid 图表（2026-10-03）
+
+- [x] ```mermaid 围栏渲染成图表：`marked` renderer 只产出占位块，`MutationObserver` + 串行队列在 DOM 里补 SVG — 验证 `scripts/ui-test-mermaid.ts` 17 项断言全过（flowchart 画出 3 个节点、SVG 在 DOM、围栏原文保留在 `.mermaid-source`）
+- [x] 失败降级：语法错误显示「图表渲染失败：<首行>」并展开源码，不留空白框 — 验证：`pie title Bad` 与未闭合 fence 均进入 failed 态且 `.mermaid-source` 可见
+- [x] 安全：产物绕过 DOMPurify，所以 `securityLevel: 'strict'` 不能改；标签里的 `<img onerror>` 不执行 — 验证：`window.__pwned === undefined`，`img[onerror]` = 0
+- [x] 源码不能走 `data-*`：DOMPurify 会丢掉值里含注释终止符（`-->`）的属性，改用文本节点承载，复制按钮读同一份 — 验证：`data-x="a--&gt;b"` 经 sanitize 后属性消失，文本节点方案往返一致
+- [x] 按需加载 3.4 MB 包：首个图表出现才插 `<script src="/vendor/mermaid.min.js">`；`npm run vendor` 与许可证清单同步 — 验证：无图表时 `typeof globalThis.mermaid === "undefined"`，注入后为 `object`
+- [x] 与 Prism 共存：同一气泡里 mermaid 块 + json 代码块，后者仍有 `.token` 高亮；流式 `text_end` 重写气泡不重复渲染 — 验证：`.mermaid-block svg` = 1 且 `.code-block .token` > 0；连渲两次仍只有 1 个 `.mermaid-body`
+- 回归：typecheck 干净；单测 31/31；`ui-test-sidebar` 26 项仍全过

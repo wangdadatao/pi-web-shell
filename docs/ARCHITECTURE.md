@@ -117,6 +117,7 @@ SSE 帧格式：`snapshot` | `event`（pi 原始事件） | `stats`（`get_sessi
 | `purify.es.mjs` | 消毒（模型/工具输出均不可信） | ES module |
 | `prism.js` | 代码高亮核心 | classic script（定义全局 `Prism`） |
 | `prism-languages.js` | 13 种语言定义，仓 vendor 时拼接成一个文件 | classic script，必须在 `prism.js` 之后 |
+| `mermaid.min.js` | 图表渲染（~3.4 MB） | classic script，**按需**注入，不用就不下载 |
 
 Prism 以 `window.Prism = { manual: true }` 加载，禁止它自己扫描 DOM；
 高亮在 `marked` 的 `code` renderer 里显式调用，顺便把语言标签和复制按钮一并生成。
@@ -124,6 +125,25 @@ Prism 以 `window.Prism = { manual: true }` 加载，禁止它自己扫描 DOM�
 
 Markdown 渲染路径：`marked.parse()` → `DOMPurify.sanitize()` → `innerHTML`。
 工具输出、思考块不走 Markdown，保持逐字显示。
+
+## Mermaid 图表
+
+```mermaid 围栏被 `marked` 渲染成一个占位块，真正的图在 DOM 里再异步补上：
+
+1. renderer 产出 `.mermaid-body`（占位）+ `.mermaid-source`（围栏原文，默认 `hidden`）。
+2. `MutationObserver` 盯着 `#messages`，发现新的 `.mermaid-body` 就排队渲染。
+3. 队列串行执行 `mermaid.render()`，成功写回 SVG，失败显示原因并展开源码。
+
+几个不得不这样的理由：
+
+- **源码不能放在属性里**。DOMPurify 会丢掉值里带注释终止符（`-->`）的属性，
+  而箭头是每个图表都有的东西，所以只能用文本节点带过去。
+- **不能用 `data-*` + `innerHTML` 一次成型**：mermaid 是异步的，且需要活着的元素。
+  流式结束时气泡会整个重写，`MutationObserver` + 每块的状态标记保证重复渲染幂等。
+- **渲染结果不再过 DOMPurify**（它绕过 sanitize 直接写 DOM），所以 `securityLevel: 'strict'`
+  不能改：标签转义、禁用 `click` 指令，由 mermaid 自己用 DOMPurify 做。
+- **按需加载**：3.4 MB 是 Prism 全集的两倍多，而多数会话没有图表，
+  所以脚本在第一个 ```mermaid 出现时才插入（`loadMermaid()`）；代价是首图有一次本地请求延迟。
 
 ## 配色来自 pi，不是自己调的
 
@@ -172,11 +192,13 @@ src/server/sessionRegistry.ts  子进程生命周期与引用计数
 src/server/httpServer.ts   HTTP 路由、SSE、静态文件
 src/server/index.ts        入口：启动 + 开浏览器 + 信号处理
 src/web/                   无构建步骤的前端（HTML/CSS/JS）
-src/web/vendor/            vendored 的 marked / DOMPurify
+src/web/vendor/            vendored 的 marked / DOMPurify / Prism / Mermaid
 scripts/plan.ts            读 docs/PLAN.md 打印进度与下一项
 scripts/screenshot.ts      CDP 截图 + 断言（普通 --screenshot 会被 SSE 长连接卡住）
 scripts/theme.ts           与 pi 主题逐项比对配色是否漂移
 scripts/vendor.ts          拷贝前端第三方库
+scripts/ui-test-sidebar.ts 侧栏折叠的 CDP 断言
+scripts/ui-test-mermaid.ts mermaid 图表渲染的 CDP 断言（含标签转义、失败降级、幂等）
 ```
 
 ## 前端渲染模型

@@ -3,7 +3,7 @@
  *
  * The frontend has no build step and the server has no runtime dependencies,
  * so the libraries it needs are vendored as plain files. Re-run this after
- * bumping `marked`, `dompurify`, or `prismjs`.
+ * bumping `marked`, `dompurify`, `prismjs`, or `mermaid`.
  *
  *   npm run vendor
  */
@@ -75,6 +75,15 @@ const SPECS: Spec[] = [
       "/* prismjs language definitions (concatenated; must load after prism.js) */\n" +
       PRISM_LANGUAGES.map((lang) => `/* → ${lang} */`).join("\n"),
   },
+  {
+    // Mermaid ships one self-contained esbuild bundle that assigns itself to
+    // `globalThis.mermaid`; the ESM build is split into lazy chunks we would not
+    // be able to serve without a build step.
+    kind: "bundle",
+    to: "mermaid.min.js",
+    from: ["node_modules/mermaid/dist/mermaid.min.js"],
+    banner: "/* mermaid (classic script; sets the global `mermaid`) */",
+  },
 ];
 
 async function main(): Promise<void> {
@@ -90,6 +99,10 @@ async function main(): Promise<void> {
     "- `marked.esm.js` — [marked](https://github.com/markedjs/marked), MIT",
     "- `purify.es.mjs` — [DOMPurify](https://github.com/cure53/DOMPurify), Apache-2.0 OR MPL-2.0 (dual)",
     "- `prism.js`, `prism-languages.js` — [Prism](https://github.com/PrismJS/prism), MIT",
+    "- `mermaid.min.js` — [Mermaid](https://github.com/mermaid-js/mermaid), MIT",
+    "",
+    "`mermaid.min.js` is ~3.4 MB; it is the only vendored asset that size, and it renders",
+    "diagrams client-side so the server stays dependency-free.",
     "",
   ];
 

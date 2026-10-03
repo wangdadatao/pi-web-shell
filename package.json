@@ -26,6 +26,7 @@
     "@types/node": "^22.10.2",
     "dompurify": "^3.4.16",
     "marked": "^18.0.14",
+    "mermaid": "^11.17.2",
     "prismjs": "^1.30.0",
     "typescript": "^5.9.2"
   }

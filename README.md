@@ -14,7 +14,7 @@
 ## 快速开始
 
 ```bash
-npm install          # 装 devDependencies（typescript / @types/node / marked / dompurify）并自动 vendor 前端依赖
+npm install          # 装 devDependencies（typescript / @types/node / marked / dompurify / prismjs / mermaid）并自动 vendor 前端依赖
 npm start            # 前台启动，自动打开浏览器
 ```
 
@@ -29,7 +29,7 @@ npm run service:uninstall  # 移除
 
 装了服务之后**不要再跑 `npm start`**（会报端口占用），用 `service:restart`。
 
-运行时零依赖：`marked` / `DOMPurify` / `Prism` 已拷贝到 `src/web/vendor/`，前端不需要任何构建步骤。
+运行时零依赖：`marked` / `DOMPurify` / `Prism` / `Mermaid` 已拷贝到 `src/web/vendor/`，前端不需要任何构建步骤。
 升级这些库后跑一下 `npm run vendor`（`npm install` 也会自动跑）。
 
 默认地址 <http://127.0.0.1:4711/>。
@@ -63,6 +63,7 @@ npm run plan         # 查看 docs/PLAN.md 的进度和下一项
 - 右侧：对话区，流式输出；回复按 Markdown 渲染（GFM：标题/列表/表格/代码块/引用/链接）。
 - 配色**逐个复制自 pi 主题**（行内代码紫、标题琥珀、代码块绿、字符串橙），不是自己调的。
 - 代码块带语言标签 + 语法高亮 + 复制按钮；未标注语言的块按纯文本显示（不猜语言）。
+- ```mermaid 围栏渲染成图表（flowchart / sequence / gantt / pie 等），带复制源码按钮；语法错误时显示原因并展开源码。Mermaid 约 3.4 MB，首次出现图表时才按需加载。
 - 每条助手回复右上角有复制按钮（悬停出现），只复制正文，不含思考与工具输出。
 - 顶部统计条：上下文进度条、累计 token、缓存命中、花费、轮数/工具数、实时 token/s。
 - 连续的工具调用聚合成一个折叠块（如「思考 + 12 次工具调用 · read ×4、bash ×8」），默认收起。
@@ -141,7 +142,7 @@ src/server/sessionRegistry.ts  子进程生命周期
 src/server/httpServer.ts       路由 + SSE + 静态文件
 src/server/index.ts            入口
 src/web/                       前端（无构建步骤）
-src/web/vendor/                vendored 的 marked / DOMPurify / Prism（由 npm run vendor 生成）
+src/web/vendor/                vendored 的 marked / DOMPurify / Prism / Mermaid（由 npm run vendor 生成）
 scripts/plan.ts                计划进度工具
 scripts/screenshot.ts          CDP 截图 + 断言
 scripts/theme.ts               配色比对（npm run theme:check）

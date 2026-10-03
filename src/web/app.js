@@ -179,6 +179,7 @@ marked.use({
     code({ text, lang, escaped }) {
       const language = (lang || "").trim().split(/\s+/)[0] || "";
       const code = text.replace(/\n$/, "");
+      if (language === "mermaid") return renderMermaidBlock(code);
       const grammar = language ? prism?.languages?.[language] : undefined;
       let body = null;
       if (grammar && !escaped) {
@@ -207,6 +208,142 @@ marked.use({
     },
   },
 });
+
+/**
+ * A ```mermaid fence becomes a placeholder, not a diagram.
+ *
+ * Markdown is sanitized as a string before it reaches the DOM, but mermaid is
+ * async and needs a live element, so the fence body is kept next to the canvas
+ * and `renderMermaidDiagrams()` fills the canvas in later. The source has to
+ * live in the DOM as text: DOMPurify drops any attribute whose value contains
+ * a comment terminator, which rules out the obvious `data-mermaid="..."` trick
+ * because `-->` is the one thing every diagram has. Keeping it in the DOM also
+ * gives the copy button something to read for rendered and failed blocks alike.
+ */
+function renderMermaidBlock(source) {
+  return (
+    `<div class="mermaid-block">` +
+    `<div class="code-head"><span class="code-lang">mermaid</span>` +
+    `<button class="copy-btn" type="button" data-copy="diagram" aria-label="复制图表源码">复制</button></div>` +
+    `<div class="mermaid-body"><span class="mermaid-pending">渲染图表中…</span></div>` +
+    `<pre class="mermaid-source" hidden><code>${esc(source)}</code></pre>` +
+    `</div>`
+  );
+}
+
+// ----------------------------------------------------------------- mermaid
+
+/** `mermaid` is a classic script loaded on demand; absent means it failed. */
+function mermaidApi() {
+  const api = globalThis.mermaid;
+  return api && typeof api.render === "function" ? api : null;
+}
+
+let mermaidReady = false;
+let mermaidSerial = 0;
+/** Mermaid keeps global state, so renders are serialized through one chain. */
+let mermaidQueue = Promise.resolve();
+/** The 3.4 MB bundle is fetched the first time a diagram shows up, not on load. */
+let mermaidLoading = null;
+
+function loadMermaid() {
+  if (mermaidApi()) return Promise.resolve(mermaidApi());
+  if (!mermaidLoading) {
+    mermaidLoading = new Promise((resolve) => {
+      const script = document.createElement("script");
+      script.src = "/vendor/mermaid.min.js";
+      script.addEventListener("load", () => resolve(mermaidApi()));
+      script.addEventListener("error", () => resolve(null));
+      document.head.appendChild(script);
+    });
+  }
+  return mermaidLoading;
+}
+
+function initMermaid() {
+  const api = mermaidApi();
+  if (!api) return null;
+  if (!mermaidReady) {
+    api.initialize({
+      startOnLoad: false,
+      // Labels are escaped and `click` handlers disabled — diagram source is
+      // model output, so it gets the same distrust as everything else.
+      securityLevel: "strict",
+      theme: "dark",
+      fontFamily: "inherit",
+    });
+    mermaidReady = true;
+  }
+  return api;
+}
+
+/** Queue a render for every not-yet-processed diagram under `root`. */
+function scheduleMermaid(root) {
+  const targets = root.querySelectorAll ? [...root.querySelectorAll(".mermaid-body")] : [];
+  if (root.matches?.(".mermaid-body")) targets.unshift(root);
+  if (targets.length === 0) return;
+  mermaidQueue = mermaidQueue
+    .then(() => renderMermaidDiagrams(targets))
+    .catch(() => {});
+}
+
+function mermaidSource(canvas) {
+  return canvas.closest(".mermaid-block")?.querySelector(".mermaid-source code")?.textContent ?? "";
+}
+
+async function renderMermaidDiagrams(targets) {
+  if (!initMermaid()) await loadMermaid();
+  const api = initMermaid();
+  for (const node of targets) {
+    // A streamed `text_end` can replace the bubble while we wait our turn.
+    if (node.dataset.mermaidState || !node.isConnected) continue;
+    const source = mermaidSource(node);
+    node.dataset.mermaidState = "rendering";
+    if (!api) {
+      failMermaid(node, "mermaid 未加载");
+      continue;
+    }
+    const id = `pi-mermaid-${(mermaidSerial += 1)}`;
+    try {
+      const { svg } = await api.render(id, source);
+      node.innerHTML = svg;
+      node.dataset.mermaidState = "done";
+    } catch (error) {
+      // Mermaid parks its own error graphic in the body; ours replaces it.
+      document.getElementById(`d${id}`)?.remove();
+      document.getElementById(id)?.remove();
+      failMermaid(node, error instanceof Error ? error.message : String(error));
+    }
+  }
+}
+
+/** A failed diagram shows why, next to the source it could not parse. */
+function failMermaid(node, message) {
+  node.dataset.mermaidState = "failed";
+  const note = document.createElement("div");
+  note.className = "mermaid-error";
+  const first = String(message).split("\n")[0].slice(0, 200);
+  note.textContent = `图表渲染失败：${first}`;
+  node.replaceChildren(note);
+  const source = node.closest(".mermaid-block")?.querySelector(".mermaid-source");
+  if (source) source.hidden = false;
+}
+
+/**
+ * Mermaid cannot run inside the marked renderer (it is async and needs a live
+ * node), so the message list is watched instead. Every path that renders
+ * Markdown — history load, streamed `text_end`, finalize — lands here, and the
+ * per-node state flag keeps repeated renders of the same block idempotent.
+ */
+function observeMermaid() {
+  new MutationObserver((records) => {
+    for (const record of records) {
+      for (const added of record.addedNodes) {
+        if (added.nodeType === 1) scheduleMermaid(added);
+      }
+    }
+  }).observe(el.messages, { childList: true, subtree: true });
+}
 
 /** Render literal text (tool output, thinking) without Markdown interpretation. */
 function renderPlain(text) {
@@ -1203,6 +1340,8 @@ async function handleMessagesClick(event) {
   let text = "";
   if (kind === "code") {
     text = button.closest(".code-block")?.querySelector("code")?.textContent ?? "";
+  } else if (kind === "diagram") {
+    text = button.closest(".mermaid-block")?.querySelector(".mermaid-source code")?.textContent ?? "";
   } else {
     const message = button.closest(".msg");
     text = message ? messageText(message) : "";
@@ -1516,6 +1655,7 @@ function bind() {
 async function main() {
   bind();
   initSidebar();
+  observeMermaid();
   await refreshSessionList();
   if (state.folders.length > 0) {
     await selectFolder(state.folders[0].cwd);
