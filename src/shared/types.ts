@@ -309,6 +309,24 @@ export interface ResourcePaths {
   enableSkillCommands: boolean;
 }
 
+/** How one editable settings.json key may be changed from the web UI. */
+export interface EditableKeySpec {
+  type: "boolean" | "string" | "number" | "string[]" | "enum";
+  /** Allowed values for `type: "enum"`. */
+  values?: string[];
+  min?: number;
+  max?: number;
+  /** pi's built-in default, shown as a placeholder hint when the key is unset. */
+  builtin?: string | number | boolean | null;
+}
+
+/** The editable-settings block of the environment payload: whitelist + values. */
+export interface EditableSettings {
+  keys: Record<string, EditableKeySpec>;
+  /** Current value per key; `null` means the key is not set in settings.json. */
+  values: Record<string, unknown>;
+}
+
 /** Startup preferences pi reads from `settings.json` (read-only for now). */
 export interface AgentDefaults {
   provider: string | null;
@@ -325,6 +343,8 @@ export interface SettingsEnvironment {
   files: ConfigFileInfo[];
   defaults: AgentDefaults;
   resourcePaths: ResourcePaths;
+  /** Whitelisted keys the web may edit, with their current values. */
+  editable: EditableSettings;
   skills: SkillInfo[];
   mcpServers: McpServerInfo[];
   /** How this web shell itself is configured (env vars, not pi's files). */

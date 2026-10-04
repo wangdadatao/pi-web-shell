@@ -393,3 +393,29 @@ UI 断言有 5 个脚本但要逐个手跑。
   bug（`BASE` 常量在 argv 赋值前捕获默认端口 4711，裸跑时打到了线上服务）
 - [x] 账本订正：「已知取舍」里 extension_ui_request 一条已过时（extensionUi.ts 早已落地），勾掉
 - 回归：typecheck 干净；单测 57/57；5 个 ui-test 全过
+
+## M2.13 设置页写操作：settings.json 白名单编辑（2026-10-04）
+
+问题：设置页的模型配置 / agent 设置两页只读，「计划中」列着改 settings.json 与生效机制。
+做法：**补丁式写盘**——浏览器永不发整份 JSON，只发扁平 `{点分键: 值|null}`，键必须落在
+服务端白名单里（17 个对 web 有意义的键；theme/tuiMode/fullscreen*/terminal.* 等 TUI 专属键
+不进页面），每个值过类型与范围校验；null/空串 = 删键回退 pi 内置默认。
+
+- [x] `settingsStore.ts`：白名单 + 校验 + 嵌套合并（`compaction.modelOverrides`、`retry.provider`
+  这类兄弟键原样保留；theme/packages 等未知键不动）；写前备份 `settings.json.bak`；tmp+rename
+  原子写；文件存在但解析失败时拒绝覆写 — 验证：单测 11 例（合并保留/备份演进/新建无备份/
+  删键/空数组归一/未知键不动盘/类型范围/坏 JSON 拒写/无 tmp 残留），其中两例先抓出真 bug：
+  enum 的空串没归一成 null、JSON.parse 异常被当「文件不存在」继续覆写
+- [x] `POST /api/settings/save`：校验失败 400；成功后 `registry.disposeAll()` 回收全部
+  暖子进程——pi 每个子进程只读一次配置，打开的流走 SSE 自愈路径重连，新子进程即读新配置 —
+  验证：sessionRegistry 单测新增 1 例（两会话 disposeAll 后 list 空、两个 pid 实测退出）
+- [x] environment 载荷新增 `editable`（白名单 spec + 当前值）；模型页三个默认值、agent 页
+  14 个键变成真控件（布尔三态/枚举/数字/字符串/工具列表），「未设置」显式可选并标注 pi
+  内置默认；保存后乐观更新 + 后台刷新，提示语存 state 不被重渲染抹掉 — 验证：
+  ui-test-settings-edit 20 断言（种子渲染/改值保存/删默认 provider/超范围 400 且不动盘/
+  盘上 JSON 逐键核对：未知键与嵌套兄弟键保留、.bak 为改前内容、无页面异常）
+- [x] 隔离：ui-test 编排器给共享服务端挂临时 `PI_CODING_AGENT_DIR`，settings-edit 测试
+  自带独立 agent 目录——测试永不读写真实 `~/.pi/agent`
+- [x] i18n：新增 31 词条中英对齐（268/267+locale 名）；models/agent 菜单副标题摘掉「只读」；
+  已完成的 plan 条目（models.plan.1 / agent.plan.1 / agent.plan.4）从字典与页面移除
+- 回归：typecheck 干净；单测 69/69；`npm run ui:test` 6 个脚本全绿

@@ -17,6 +17,7 @@
 import { readFile, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { Config } from "./config.ts";
+import { EDITABLE_KEYS, editableValuesOf } from "./settingsStore.ts";
 import type {
   ConfigFileInfo,
   McpServerInfo,
@@ -57,6 +58,10 @@ export async function collectEnvironment(config: Config): Promise<SettingsEnviro
       hideThinkingBlock: settings?.["hideThinkingBlock"] === true,
     },
     resourcePaths: readResourcePaths(settings),
+    editable: {
+      keys: EDITABLE_KEYS,
+      values: editableValuesOf(settings),
+    },
     skills,
     mcpServers: listMcpServers(mcp, mcpPath),
     server: {

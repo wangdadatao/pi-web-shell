@@ -87,11 +87,15 @@ async function main(): Promise<void> {
 
   const port = 8700 + Math.floor(Math.random() * 200);
   const sessionsDir = await mkdtemp(join(tmpdir(), "pi-ui-test-sessions-"));
+  // An isolated agent dir too: ui tests must never read, let alone write, the
+  // real ~/.pi/agent (the settings-edit test writes settings.json).
+  const agentDir = await mkdtemp(join(tmpdir(), "pi-ui-test-agent-"));
   const server: ChildProcess = spawn(process.execPath, ["src/server/index.ts"], {
     cwd: repoRoot,
     env: {
       ...process.env,
       PI_SHELL_SESSIONS_DIR: sessionsDir,
+      PI_CODING_AGENT_DIR: agentDir,
       PI_SHELL_PORT: String(port),
       PI_SHELL_OPEN_BROWSER: "0",
     },
@@ -107,8 +111,11 @@ async function main(): Promise<void> {
       console.log(`isolated server: ${base} (${sessionsDir})`);
       for (const script of uiTests) {
         const label = script.slice(script.lastIndexOf("/") + 1);
+        // The settings-edit test writes settings.json, so it gets the isolated
+        // agent dir as a second argument (base URL first, like every script).
+        const args = label === "ui-test-settings-edit.ts" ? [script, base, agentDir] : [script, base];
         // One failing script must not stop the others: each runs to completion.
-        if (await run(label, process.execPath, [script, base])) continue;
+        if (await run(label, process.execPath, args)) continue;
         failed.push(label);
       }
     }

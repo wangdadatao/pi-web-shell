@@ -66,6 +66,33 @@ async function waitUntil(cond: () => boolean | Promise<boolean>, ms = 5_000): Pr
 }
 
 describe("SessionRegistry", () => {
+  it("disposeAll retires every live child and empties the table", async () => {
+    const f = await makeFixture("dispose-all");
+    roots.push(f.root);
+
+    const secondPath = join(f.root, "second.jsonl");
+    await writeFile(secondPath, "");
+    await f.registry.acquire(f.sessionPath, f.root);
+    await f.registry.acquire(secondPath, f.root);
+    await waitUntil(async () => (await pids(f.pidfile)).length === 2);
+    const [a = -1, b = -1] = (await pids(f.pidfile)).slice(0, 2);
+
+    // This is the "apply config" path: after a settings save, every warm
+    // subprocess must be gone so the next acquire respawns with new config.
+    await f.registry.disposeAll();
+    assert.equal(f.registry.list().length, 0);
+    await waitUntil(() => {
+      const alive = (pid: number) => {
+        try {
+          process.kill(pid, 0);
+          return true;
+        } catch {
+          return false;
+        }
+      };
+      return !alive(a) && !alive(b);
+    });
+  });
   it("shares one fresh child between concurrent acquires after a crash", async () => {
     const f = await makeFixture("concurrent");
     roots.push(f.root);

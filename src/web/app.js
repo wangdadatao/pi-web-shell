@@ -106,6 +106,18 @@ const api = {
     if (!res.ok) throw new Error(t("api.environmentFailed", { status: res.status }));
     return res.json();
   },
+  /** Whitelisted patch against pi's settings.json; see settingsStore.ts. */
+  async saveSettings(patch) {
+    const res = await fetch("/api/settings/save", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    });
+    if (res.status === 404) throw new Error(t("api.serverOutdated"));
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || t("api.saveSettingsFailed", { status: res.status }));
+    return data;
+  },
   async newSession(cwd) {
     const res = await fetch("/api/sessions/new", {
       method: "POST",
@@ -220,6 +232,8 @@ const state = {
   usageModel: "",
   /** Lazily fetched, read-only payloads for the settings page. */
   settingsData: { usage: null, environment: null },
+  /** Last settings.json save result; re-renders must not lose the message. */
+  settingsSaveStatus: null,
   /** Payload being fetched right now, so we never ask twice. */
   pendingKey: null,
   /** Payload that failed, so we do not retry in a loop. */
@@ -2341,6 +2355,17 @@ function renderSettings() {
   };
   el.settingsBody.innerHTML = `<div class="settings-page">${renderers[state.settingsSection]()}</div>`;
   // Controls live inside the rendered HTML, so they are bound here.
+  const saveButton = document.getElementById("settings-save");
+  if (saveButton) saveButton.onclick = saveEditableSettings;
+  // A finished save survives the re-renders that follow it (optimistic update,
+  // background refresh) because the message lives in state.
+  if (state.settingsSaveStatus) {
+    const status = document.getElementById("settings-save-status");
+    if (status) {
+      status.className = state.settingsSaveStatus.cls;
+      status.textContent = state.settingsSaveStatus.text;
+    }
+  }
   const modelSelect = document.getElementById("usage-model");
   if (modelSelect) {
     modelSelect.onchange = () => {
@@ -2733,7 +2758,8 @@ function renderModelsSection(env) {
       t("models.switchTitle"),
       `<p class="settings-lead" style="margin:0">${esc(t("models.switchLead"))}</p>`,
     )}
-    ${planned([t("models.plan.1"), t("models.plan.2"), t("models.plan.3")])}`;
+    ${section(t("settings.editTitle"), settingsForm(env, MODEL_SETTING_KEYS))}
+    ${planned([t("models.plan.2"), t("models.plan.3")])}`;
 }
 
 /**
@@ -2821,7 +2847,137 @@ function renderAgentSection(env) {
         [t("agent.agentDir"), prettyPath(env.agentDir)],
       ]),
     )}
-    ${planned([t("agent.plan.1"), t("agent.plan.2"), t("agent.plan.3"), t("agent.plan.4")])}`;
+    ${section(t("settings.editTitle"), settingsForm(env, AGENT_SETTING_KEYS))}
+    ${planned([t("agent.plan.2"), t("agent.plan.3")])}`;
+}
+
+/* ---------- editable settings.json (whitelisted keys, server-validated) ---------- */
+
+const MODEL_SETTING_KEYS = ["defaultProvider", "defaultModel", "defaultThinkingLevel"];
+const AGENT_SETTING_KEYS = [
+  "defaultTools",
+  "hideThinkingBlock",
+  "showCacheMissNotices",
+  "enableSkillCommands",
+  "markdown.mermaid",
+  "compaction.enabled",
+  "compaction.reserveTokens",
+  "compaction.keepRecentTokens",
+  "images.autoResize",
+  "images.blockImages",
+  "retry.enabled",
+  "retry.maxRetries",
+  "retry.baseDelayMs",
+  "retry.maxAgentDelayMs",
+];
+
+/** Label rows + one save button for a slice of the whitelist. */
+function settingsForm(env, keys) {
+  const editable = env?.editable;
+  if (!editable) return `<div class="settings-empty">${esc(t("settings.loading"))}</div>`;
+  const rows = keys
+    .filter((key) => editable.keys[key])
+    .map((key) => settingRow(key, editable.keys[key], editable.values[key] ?? null))
+    .join("");
+  return `
+    <p class="settings-lead" style="margin:0 0 8px">${esc(t("settings.editLead"))}</p>
+    <table class="settings-table kv">${rows}</table>
+    <div class="settings-toolbar" style="margin:8px 0 0">
+      <button id="settings-save" class="settings-save" type="button">${esc(t("settings.save"))}</button>
+      <span id="settings-save-status" class="settings-save-status" aria-live="polite"></span>
+    </div>`;
+}
+
+/** One control per key. "Unset" is always an option: it removes the key so pi
+ * falls back to its built-in default (shown as the placeholder). */
+function settingRow(key, spec, value) {
+  const unset = value === null || value === undefined;
+  const attrs = `data-setting-key="${esc(key)}" data-setting-type="${spec.type}"`;
+  let control;
+  if (spec.type === "boolean") {
+    control = `<select ${attrs} class="settings-select">
+      <option value=""${unset ? " selected" : ""}>${esc(t("settings.unset"))} · ${spec.builtin === true ? t("settings.on") : t("settings.off")}</option>
+      <option value="true"${value === true ? " selected" : ""}>${esc(t("settings.on"))}</option>
+      <option value="false"${value === false ? " selected" : ""}>${esc(t("settings.off"))}</option>
+    </select>`;
+  } else if (spec.type === "enum") {
+    control = `<select ${attrs} class="settings-select">
+      <option value=""${unset ? " selected" : ""}>${esc(t("settings.unset"))} · ${esc(String(spec.builtin ?? ""))}</option>
+      ${(spec.values ?? []).map((v) => `<option value="${esc(v)}"${value === v ? " selected" : ""}>${esc(v)}</option>`).join("")}
+    </select>`;
+  } else if (spec.type === "number") {
+    control = `<input ${attrs} class="settings-input" type="number" inputmode="numeric" min="${spec.min ?? 0}"${spec.max !== undefined ? ` max="${spec.max}"` : ""} value="${unset ? "" : Number(value)}" placeholder="${Number(spec.builtin ?? 0)}" />`;
+  } else if (spec.type === "string[]") {
+    control = `<input ${attrs} class="settings-input" value="${unset ? "" : esc((value || []).join(", "))}" placeholder="${esc(String(spec.builtin ?? ""))}" />`;
+  } else {
+    control = `<input ${attrs} class="settings-input" value="${unset ? "" : esc(String(value))}" placeholder="${esc(t("settings.autoHint"))}" />`;
+  }
+  return `<tr><td class="row-label">${esc(t(`settings.key.${key}`))}</td><td>${control}</td></tr>`;
+}
+
+/** Read the rendered controls back into a flat patch; null = remove key. */
+function collectEditablePatch() {
+  const patch = {};
+  for (const control of document.querySelectorAll("[data-setting-key]")) {
+    const key = control.dataset.settingKey;
+    if (control.tagName === "SELECT") {
+      const raw = control.value;
+      patch[key] = raw === "" ? null : raw === "true" ? true : raw === "false" ? false : raw;
+    } else if (control.dataset.settingType === "number") {
+      patch[key] = control.value === "" ? null : Number(control.value);
+    } else {
+      const raw = control.value.trim();
+      if (raw === "") patch[key] = null;
+      else if (control.dataset.settingType === "string[]") patch[key] = raw.split(/[,，\s]+/).filter(Boolean);
+      else patch[key] = raw;
+    }
+  }
+  return patch;
+}
+
+async function saveEditableSettings() {
+  const button = document.getElementById("settings-save");
+  const status = document.getElementById("settings-save-status");
+  if (!button || !status) return;
+  button.disabled = true;
+  status.className = "settings-save-status";
+  status.textContent = t("settings.saving");
+  // Kept in state: the background re-render below (and any other rerender)
+  // rebuilds the DOM, and the message must survive it.
+  state.settingsSaveStatus = null;
+  try {
+    const result = await api.saveSettings(collectEditablePatch());
+    const env = state.settingsData.environment;
+    if (env) {
+      env.editable.values = result.values;
+      env.defaults.provider = result.values["defaultProvider"] ?? null;
+      env.defaults.model = result.values["defaultModel"] ?? null;
+      env.defaults.thinkingLevel = result.values["defaultThinkingLevel"] ?? null;
+      env.defaults.hideThinkingBlock = result.values["hideThinkingBlock"] === true;
+    }
+    state.settingsSaveStatus = {
+      cls: "settings-save-status ok",
+      text: t("settings.saved", { backup: result.backup ? result.backup.split("/").pop() : "" }),
+    };
+    renderSettings();
+    // File sizes/mtimes in the read-only tables are stale now; refresh quietly.
+    void (async () => {
+      try {
+        state.settingsData.environment = await api.settingsEnvironment();
+        if (state.view === "settings" && state.settingsSection !== "usage") renderSettings();
+      } catch {
+        /* keep the optimistic copy */
+      }
+    })();
+  } catch (error) {
+    state.settingsSaveStatus = {
+      cls: "settings-save-status error",
+      text: error instanceof Error ? error.message : String(error),
+    };
+    renderSettings();
+  } finally {
+    button.disabled = false;
+  }
 }
 
 /* ---------- small render helpers for the settings page ---------- */

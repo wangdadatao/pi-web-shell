@@ -10,6 +10,7 @@ import { isHostAllowed } from "./hostCheck.ts";
 import { ImageStore, isImageHash, stripInlineImages } from "./imageStore.ts";
 import { loadLocalImage } from "./localImage.ts";
 import { collectEnvironment } from "./environment.ts";
+import { SettingsValidationError, applySettingsPatch } from "./settingsStore.ts";
 import { normalizeCommands } from "./commands.ts";
 import { buildUiResponse } from "./extensionUi.ts";
 import { UsageIndex } from "./usageStats.ts";
@@ -158,6 +159,24 @@ export function createApp(deps: ServerDeps): Server {
 
       if (route === "GET /api/settings/environment") {
         return sendJson(res, 200, await collectEnvironment(config));
+      }
+      if (route === "POST /api/settings/save") {
+        // A whitelisted `{key: value|null}` patch — never a document to write
+        // verbatim. Validation, backup, and the atomic write live in the store.
+        const patch = await readJson(req);
+        try {
+          const result = await applySettingsPatch(config.agentDir, patch);
+          // pi reads settings.json once per subprocess, so the warm ones still
+          // run the old config. Dispose them all: open streams reconnect via
+          // the SSE self-heal path and respawn with the new settings.
+          await deps.registry.disposeAll();
+          return sendJson(res, 200, { ok: true, ...result });
+        } catch (error) {
+          if (error instanceof SettingsValidationError) {
+            return sendJson(res, 400, { error: error.message });
+          }
+          throw error;
+        }
       }
 
       if (req.method === "GET") {
