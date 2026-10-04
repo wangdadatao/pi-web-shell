@@ -5,26 +5,54 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>pi-web-shell</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🥧</text></svg>" />
+    <!--
+      Resolve the stored theme (and language) before the stylesheet applies,
+      so a light-theme reload does not flash dark first. This mirrors the logic
+      in app.js `applyTheme()`; it cannot import it, because it must run
+      inline, before the first paint.
+    -->
+    <script>
+      (function () {
+        var pref = "system";
+        var locale = null;
+        try {
+          pref = localStorage.getItem("piShellTheme") || "system";
+          locale = localStorage.getItem("piShellLocale");
+        } catch (error) {
+          /* storage disabled: fall back to the defaults */
+        }
+        var light = window.matchMedia("(prefers-color-scheme: light)").matches;
+        document.documentElement.dataset.theme =
+          pref === "system" ? (light ? "light" : "dark") : pref;
+        if (locale) document.documentElement.lang = locale;
+      })();
+    </script>
     <link rel="stylesheet" href="/style.css" />
   </head>
   <body>
     <div id="app">
       <aside id="folders" class="pane">
         <div class="pane-head">
-          <button id="sidebar-toggle" class="icon-btn" title="收起文件夹栏（⌘B）">‹</button>
-          <span>文件夹</span>
+          <button id="sidebar-toggle" class="icon-btn" data-i18n-title="sidebar.collapseFolders">‹</button>
+          <span data-i18n="sidebar.folders">文件夹</span>
           <span class="head-actions">
-            <button id="new-folder" class="icon-btn" title="在指定文件夹新建会话">＋</button>
-            <button id="refresh" class="icon-btn" title="刷新">⟳</button>
+            <button id="new-folder" class="icon-btn" data-i18n-title="sidebar.newFolder">＋</button>
+            <button id="refresh" class="icon-btn" data-i18n-title="sidebar.refresh">⟳</button>
           </span>
         </div>
         <div id="folder-list" class="list"></div>
+        <!-- Pinned footer: outside the scrollable list, so the settings entry
+             stays put no matter how many folders there are. -->
+        <div class="pane-foot">
+          <button id="settings" class="foot-btn" data-i18n-title="sidebar.settings">
+            <span class="foot-icon" aria-hidden="true">⚙</span><span data-i18n="sidebar.settings">设置</span>
+          </button>
+        </div>
       </aside>
-
       <aside id="sessions" class="pane">
         <div class="pane-head">
-          <span id="sessions-title">会话</span>
-          <button id="new-session" class="icon-btn" title="在此文件夹新建会话">＋</button>
+          <span id="sessions-title" data-i18n="sidebar.sessions">会话</span>
+          <button id="new-session" class="icon-btn" data-i18n-title="sidebar.newSession">＋</button>
         </div>
         <div id="session-list" class="list"></div>
       </aside>
@@ -32,38 +60,105 @@
       <main id="chat">
         <header id="chat-head">
           <div class="chat-head-main">
-            <div id="chat-title">选择一个会话</div>
+            <div id="chat-title" data-i18n="chat.selectSession">选择一个会话</div>
             <div id="chat-meta" class="muted"></div>
           </div>
           <div class="chat-head-actions">
             <span id="status" class="status idle"></span>
-            <button id="abort" class="ghost-btn" disabled>停止</button>
+            <button id="abort" class="ghost-btn" data-i18n="chat.stop" disabled>停止</button>
           </div>
         </header>
 
         <div id="messages" class="messages"></div>
 
-        <div id="drop-hint" class="drop-hint hidden">松手即可添加图片</div>
+        <div id="drop-hint" class="drop-hint hidden" data-i18n="chat.dropHint">松手即可添加图片</div>
+
+        <!-- Extension UI: a `setWidget` pinned above the editor, mirroring pi's
+             terminal layout. `hidden` while empty so it costs no space. -->
+        <div id="ext-widget-above" class="ext-widget" hidden></div>
 
         <footer id="composer">
+          <!-- Slash-command menu: floats above the composer while a `/token` is
+               being typed, so it never reflows the transcript. -->
+          <div id="command-menu" class="command-menu" hidden>
+            <div id="command-list" class="command-list"></div>
+          </div>
+          <!-- `setStatus` entries. A row of chips, not a single value: several
+               extensions can each own a status key. -->
+          <div id="ext-status" class="ext-status" hidden></div>
           <div id="attachments" class="attachments"></div>
           <div class="composer-row">
-            <button id="attach" class="icon-btn" title="添加图片">🖼</button>
-            <textarea id="input" rows="1" placeholder="输入消息…（Enter 发送，Shift+Enter 换行，可直接粘贴/拖拽图片）"></textarea>
-            <button id="send">发送</button>
+            <button id="attach" class="icon-btn" data-i18n-title="chat.attach">🖼</button>
+            <textarea id="input" rows="1" data-i18n-placeholder="chat.inputPlaceholder" placeholder="输入消息…（Enter 发送，Shift+Enter 换行，可直接粘贴/拖拽图片）"></textarea>
+            <button id="send" data-i18n="chat.send">发送</button>
           </div>
           <input id="file" type="file" accept="image/*" multiple hidden />
         </footer>
 
+        <div id="ext-widget-below" class="ext-widget" hidden></div>
+
         <div id="stats" class="stats-bar empty">
           <div id="stats-items" class="stats-items"></div>
           <div id="stats-actions" class="stats-actions" hidden>
-            <select id="model-select" class="stat-select" title="切换模型" aria-label="切换模型" hidden></select>
-            <select id="thinking-select" class="stat-select" title="调整思考等级" aria-label="调整思考等级" hidden></select>
+            <select id="model-select" class="stat-select" data-i18n-title="chat.switchModel" data-i18n-aria="chat.switchModel" hidden></select>
+            <select id="thinking-select" class="stat-select" data-i18n-title="chat.thinkingLevel" data-i18n-aria="chat.thinkingLevel" hidden></select>
           </div>
         </div>
       </main>
+
+      <!-- Settings is a full view of its own: the three panes are hidden while
+           it is open (`#app[data-view="settings"]`), so it gets the whole
+           window for a two-column menu + content layout. -->
+      <section id="settings-view" data-i18n-aria="settings.title" aria-label="设置">
+        <nav id="settings-nav" class="pane">
+          <div class="pane-head">
+            <button id="settings-back" class="icon-btn" data-i18n-title="settings.back">‹</button>
+            <span data-i18n="settings.title">设置</span>
+          </div>
+          <div class="list" id="settings-menu">
+            <div class="item settings-menu active" data-section="usage">
+              <div class="name" data-i18n="settings.menu.usage">token 统计</div>
+              <div class="sub" data-i18n="settings.menu.usageSub">全部会话的用量与花费</div>
+            </div>
+            <div class="item settings-menu" data-section="resources">
+              <div class="name" data-i18n="settings.menu.resources">技能 / MCP / 插件</div>
+              <div class="sub" data-i18n="settings.menu.resourcesSub">pi 当前会加载什么</div>
+            </div>
+            <div class="item settings-menu" data-section="models">
+              <div class="name" data-i18n="settings.menu.models">模型配置</div>
+              <div class="sub" data-i18n="settings.menu.modelsSub">只读</div>
+            </div>
+            <div class="item settings-menu" data-section="appearance">
+              <div class="name" data-i18n="settings.menu.appearance">语言、主题</div>
+              <div class="sub" data-i18n="settings.menu.appearanceSub">外壳自己的偏好</div>
+            </div>
+            <div class="item settings-menu" data-section="agent">
+              <div class="name" data-i18n="settings.menu.agent">agent 设置</div>
+              <div class="sub" data-i18n="settings.menu.agentSub">只读 + 计划中</div>
+            </div>
+          </div>
+        </nav>
+        <div id="settings-body"></div>
+      </section>
     </div>
+
+    <!-- Heatmap hover card. A child of <body> with `position: fixed`, so it can
+         never be clipped by the scrolling settings pane. -->
+    <div id="heat-tip" class="heat-tip" hidden></div>
+
+    <!-- Extension notifications (`ctx.ui.notify`): transient, click to dismiss. -->
+    <div id="ui-toasts" class="ui-toasts" aria-live="polite"></div>
+
+    <!-- Extension dialogs (`ctx.ui.select` / `confirm` / `input` / `editor`).
+         The extension blocks until the host answers, so this is a real modal. -->
+    <div id="ui-dialog" class="ui-dialog hidden" role="dialog" aria-modal="true">
+      <div class="ui-dialog-card">
+        <div id="ui-dialog-title" class="ui-dialog-title"></div>
+        <div id="ui-dialog-body" class="ui-dialog-body"></div>
+        <div id="ui-dialog-actions" class="ui-dialog-actions"></div>
+      </div>
+    </div>
+
     <script>
       // Load Prism as a classic script but stop it from auto-highlighting:
       // every code block is highlighted explicitly when it is rendered.

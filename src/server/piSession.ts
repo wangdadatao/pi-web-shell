@@ -41,6 +41,17 @@ interface Pending {
 }
 
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
+/** Startup events held for the first listener; a burst this large is already odd. */
+const MAX_STARTUP_EVENTS = 512;
+
+/** Deliver one event without letting a broken listener take down the process. */
+function emit(listener: EventListener, event: PiEvent): void {
+  try {
+    listener(event);
+  } catch (error) {
+    process.stderr.write(`[pi-shell] event listener error: ${String(error)}\n`);
+  }
+}
 
 /**
  * Context every web-shell child carries, via `--append-system-prompt`.
@@ -69,8 +80,21 @@ export class PiRpcSession {
   private nextId = 1;
   private readonly pending = new Map<string, Pending>();
   private readonly eventListeners = new Set<EventListener>();
+  /**
+   * Events emitted before the first listener attached.
+   *
+   * pi fires startup hooks (`session_start` → an extension's `setWidget` /
+   * `setStatus`) while we are still running `start()` / `get_state`, and a
+   * dropped event is state the browser can never recover. The first consumer to
+   * subscribe (the registry) gets this burst replayed; later subscribers see the
+   * world through a snapshot instead, so this is handed out once.
+   */
+  private pendingEvents: PiEvent[] = [];
+  private bufferStartupEvents = true;
   private readonly exitListeners = new Set<ExitListener>();
   private stopped = false;
+  /** Set before exit listeners run, so `stop()` knows there is nothing to wait for. */
+  private exited = false;
 
   constructor(options: PiRpcOptions) {
     this.options = options;
@@ -105,6 +129,17 @@ export class PiRpcSession {
       child.stdout.setEncoding("utf8");
       child.stdout.on("data", (chunk: string) => this.consume(chunk));
 
+      // A child that dies between our `write()` and its pid being reaped gives
+      // us EPIPE here. Without a listener that is an uncaught exception and
+      // takes the whole server down — every open session with it. The request
+      // is not lost either way: the `exit` handler below rejects whatever is
+      // still pending, so this only needs to keep the noise out of the crash log.
+      child.stdin.on("error", (error: Error) => {
+        process.stderr.write(
+          `[pi:${shortId(this.options.sessionPath)}] stdin error: ${error.message}\n`,
+        );
+      });
+
       // stderr is diagnostics only; never protocol data.
       child.stderr.setEncoding("utf8");
       child.stderr.on("data", (chunk: string) => {
@@ -113,6 +148,7 @@ export class PiRpcSession {
       });
 
       child.on("exit", (code, signal) => {
+        this.exited = true;
         this.failPending(new Error(`pi process exited (code=${code ?? "null"})`));
         for (const listener of this.exitListeners) listener({ code, signal });
       });
@@ -145,6 +181,12 @@ export class PiRpcSession {
 
   onEvent(listener: EventListener): () => void {
     this.eventListeners.add(listener);
+    if (this.bufferStartupEvents) {
+      this.bufferStartupEvents = false;
+      const buffered = this.pendingEvents;
+      this.pendingEvents = [];
+      for (const event of buffered) emit(listener, event);
+    }
     return () => this.eventListeners.delete(listener);
   }
 
@@ -153,12 +195,27 @@ export class PiRpcSession {
     return () => this.exitListeners.delete(listener);
   }
 
+  /**
+   * Write one raw record to pi's stdin (e.g. an `extension_ui_response`).
+   *
+   * Deliberately fire-and-forget: a dialog the browser answers may already have
+   * been resolved by an extension-side timeout, and an unknown id is not worth
+   * reporting back. Write failures surface through the stdin error handler.
+   */
+  respond(record: Record<string, unknown>): void {
+    this.write(record);
+  }
+
   /** Close stdin and wait for an orderly exit, escalating to SIGKILL. */
   async stop(graceMs = 5000): Promise<void> {
     if (!this.child || this.stopped) return;
     this.stopped = true;
     const child = this.child;
     this.child = null;
+    // Already gone: waiting for a second `exit` would burn the whole grace
+    // period on a dead pid, which matters because the registry now disposes a
+    // crashed child immediately.
+    if (this.exited) return;
 
     await new Promise<void>((resolve) => {
       const done = () => {
@@ -213,12 +270,17 @@ export class PiRpcSession {
       return;
     }
 
-    for (const listener of this.eventListeners) {
-      try {
-        listener(record as PiEvent);
-      } catch (error) {
-        process.stderr.write(`[pi-shell] event listener error: ${String(error)}\n`);
+    if (this.eventListeners.size === 0) {
+      if (this.bufferStartupEvents) {
+        // Bounded: a session nothing ever subscribes to must not grow forever.
+        if (this.pendingEvents.length >= MAX_STARTUP_EVENTS) this.pendingEvents.shift();
+        this.pendingEvents.push(record as PiEvent);
       }
+      return;
+    }
+
+    for (const listener of this.eventListeners) {
+      emit(listener, record as PiEvent);
     }
   }
 

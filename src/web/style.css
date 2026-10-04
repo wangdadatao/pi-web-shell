@@ -11,6 +11,21 @@
   --tool: #241f2e;
   --danger: #ff6b6b;
   --ok: #45d483;
+  --warning: #e3a63a;
+
+  /* Scrollbars: one thin, dark thumb that does not widen on hover. Without
+     this the browser falls back to its overlay scrollbar, which grows into a
+     fat grey bar the moment the pointer touches it. */
+  --scrollbar-thumb: #333b48;
+  --scrollbar-thumb-hover: #46505f;
+
+  /* Heatmap ramp: the accent blues, light → dark, plus an "empty day" grey.
+     Kept as explicit hexes so the five steps stay predictable. */
+  --heat-0: #1c222c;
+  --heat-1: #1e3a63;
+  --heat-2: #2b5b9e;
+  --heat-3: #3f7fd8;
+  --heat-4: #6ba6ff;
 
   /*
    * Markdown / syntax palette copied verbatim from pi's own theme
@@ -36,6 +51,111 @@
   --syntax-type: #a798d7;
   --syntax-operator: #9da5a9;
   --syntax-punctuation: #9da5a9;
+
+  /*
+   * Role colours that used to be written inline at their use sites. Naming
+   * them is what makes a light theme possible: each one has a counterpart in
+   * the `[data-theme="light"]` block below.
+   */
+  --code-bg: #0b0e13;
+  --surface-2: #10141b;
+  --surface-3: #14101d;
+  --tool-border: #3a3050;
+  --tool-border-soft: #2f2740;
+  --tool-accent: #c3a6ff;
+  --tool-output: #b8c4d4;
+  --thinking-border: #6b5b95;
+  --thinking-text: #b9aee0;
+  --thinking-muted: #8f83b8;
+  --image-border: #4a3f63;
+  --skeleton-1: #1b212a;
+  --skeleton-2: #242c37;
+  --border-hover: #3a4557;
+  --faint: #4a5566;
+  --syntax-deleted: #ea7f81;
+  --on-accent: #ffffff;
+  --track: #2a323e;
+  --shadow: 0 10px 28px rgb(0 0 0 / 55%);
+
+  /* How the browser paints form controls and unstyled scrollbars. */
+  color-scheme: dark;
+}
+
+/*
+ * Light theme: the same layout and the same roles, different values.
+ *
+ * The `--md-*` / `--syntax-*` colours are pi's own light theme resolved to hex
+ * (the same read-the-exporter trick `npm run theme:check` uses), and the rest
+ * of the palette is designed here: pi's theme only covers markdown and syntax,
+ * so a web UI's surfaces would have to be invented either way. Nothing here
+ * reads pi at runtime.
+ */
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --bg: #f4f5f7;
+  --bg-pane: #ffffff;
+  --bg-raised: #eef1f5;
+  --border: #dde2e8;
+  --text: #1f2328;
+  --muted: #667085;
+  --accent: #2f6fe4;
+  --user: #e8efff;
+  --assistant: #ffffff;
+  --tool: #f6f3fd;
+  --danger: #d64545;
+  --ok: #1f9d5f;
+  --warning: #b06d0f;
+
+  --scrollbar-thumb: #c6ccd6;
+  --scrollbar-thumb-hover: #a9b1bd;
+
+  /* Light→dark blue ramp: on white, more tokens reads as a deeper colour. */
+  --heat-0: #e9edf2;
+  --heat-1: #cfe0fb;
+  --heat-2: #9dc0f5;
+  --heat-3: #5f93e8;
+  --heat-4: #2f6fe4;
+
+  --md-heading: #8f6802;
+  --md-link: #2f7899;
+  --md-code: #7459b4;
+  --md-code-block: #337e58;
+  --md-code-block-border: #677176;
+  --md-quote: #677176;
+  --md-quote-border: #677176;
+  --md-hr: #677176;
+  --md-list-bullet: #7459b4;
+
+  --syntax-comment: #677176;
+  --syntax-keyword: #2f7899;
+  --syntax-function: #8f6802;
+  --syntax-variable: #287a81;
+  --syntax-string: #a45417;
+  --syntax-number: #337e58;
+  --syntax-type: #7459b4;
+  --syntax-operator: #677176;
+  --syntax-punctuation: #677176;
+
+  --code-bg: #f6f8fa;
+  --surface-2: #f3f5f8;
+  --surface-3: #fafaff;
+  --tool-border: #e2d9f2;
+  --tool-border-soft: #eae3f7;
+  --tool-accent: #7459b4;
+  --tool-output: #3d4451;
+  --thinking-border: #b9a6e0;
+  --thinking-text: #4b4459;
+  --thinking-muted: #7d7392;
+  --image-border: #cbbce8;
+  --skeleton-1: #eceff3;
+  --skeleton-2: #f6f8fa;
+  --border-hover: #b8c0cc;
+  --faint: #9aa3b0;
+  --syntax-deleted: #c0392b;
+  --on-accent: #ffffff;
+  --track: #e3e7ee;
+  --shadow: 0 10px 28px rgb(15 23 42 / 18%);
 }
 
 * {
@@ -54,6 +174,45 @@ body {
   color: var(--text);
   font: 14px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB",
     "Microsoft YaHei", sans-serif;
+}
+
+/* Custom scrollbars. Chromium/Safari use the ::-webkit-* pseudo-elements;
+   Firefox (which has no ::-webkit-scrollbar) gets the standard properties,
+   scoped behind @supports so Chromium keeps using the pseudo-elements. */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* The transparent border + content-box clip keeps the visible pill 6px wide
+   inside a 10px gutter, so it reads as slim at rest and on hover alike. */
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  background-clip: content-box;
+  border: 2px solid transparent;
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover,
+::-webkit-scrollbar-thumb:active {
+  background: var(--scrollbar-thumb-hover);
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-button {
+  display: none;
+}
+
+@supports not selector(::-webkit-scrollbar) {
+  html {
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar-thumb) transparent;
+  }
 }
 
 #app {
@@ -78,8 +237,10 @@ body {
   grid-template-columns: 0 0 1fr;
 }
 
+/* `:not(#settings-nav)` keeps this from hiding the settings pane, which
+   reuses the `.pane` look but is not part of the sidebar. */
 #app[data-sidebar="no-folders"] #folders,
-#app[data-sidebar="fullscreen"] .pane {
+#app[data-sidebar="fullscreen"] .pane:not(#settings-nav) {
   border-right: none;
   overflow: hidden;
   opacity: 0;
@@ -141,6 +302,450 @@ body {
   padding: 6px;
 }
 
+/* Pinned footer of the folders pane (settings entry). It lives outside
+   `.list`, so it never scrolls away with the folder list. */
+.pane-foot {
+  flex-shrink: 0;
+  padding: 6px;
+  border-top: 1px solid var(--border);
+}
+
+.foot-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+}
+
+.foot-btn:hover {
+  color: var(--text);
+  background: var(--bg-raised);
+  border-color: var(--border);
+}
+
+.foot-icon {
+  font-size: 14px;
+  line-height: 1;
+}
+
+/* Settings is a separate view, not a panel: hide the three panes and let
+   #settings-view own the window, with its own nav (240px) + content. */
+#settings-view {
+  display: none;
+}
+
+#app[data-view="settings"] {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+#app[data-view="settings"] > .pane:not(#settings-nav),
+#app[data-view="settings"] > #chat {
+  display: none;
+}
+
+#app[data-view="settings"] > #settings-view {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr);
+  min-height: 0;
+}
+
+#settings-body {
+  overflow-y: auto;
+  min-height: 0;
+  padding: 22px 26px 40px;
+}
+
+.settings-page {
+  max-width: 900px;
+}
+
+.settings-page h2 {
+  margin: 0 0 4px;
+  font-size: 17px;
+}
+
+.settings-page h3 {
+  margin: 26px 0 10px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.settings-lead {
+  margin: 0 0 18px;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+/* Summary cards: the four headline numbers of the token report. */
+.settings-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+  margin-bottom: 4px;
+}
+
+.settings-card {
+  background: var(--bg-pane);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+
+.settings-card .card-label {
+  font-size: 11.5px;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+.settings-card .card-value {
+  font-size: 20px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.settings-card .card-sub {
+  margin-top: 4px;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+/* Tables follow the message-area rules: same border colour as `.md table`,
+   tinted header, and no wrapping on the numeric columns.
+
+   `border-collapse: separate` (not `collapse`) is deliberate: Chrome drops the
+   table's own outer border when a collapsed table *also* has `border-radius` +
+   `overflow: hidden`, which left the left/right edges looking cut off. With
+   separate + `border-spacing: 0` the outer border survives, and cells draw only
+   their right/bottom edge so inner lines stay 1px instead of doubling up. */
+.settings-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  border: 1px solid var(--md-code-block-border);
+  border-radius: 6px;
+  overflow: hidden;
+  font-size: 12.5px;
+}
+
+.settings-table th,
+.settings-table td {
+  padding: 7px 10px;
+  border-right: 1px solid var(--md-code-block-border);
+  border-bottom: 1px solid var(--md-code-block-border);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* The table's own border closes the outer edge; avoid a doubled line there. */
+.settings-table th:last-child,
+.settings-table td:last-child {
+  border-right: none;
+}
+
+.settings-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.settings-table th:first-child,
+.settings-table td:first-child {
+  text-align: left;
+  white-space: normal;
+  word-break: break-word;
+}
+
+.settings-table thead th {
+  background: rgba(128, 128, 128, 0.1);
+  color: var(--text);
+  font-weight: bold;
+  position: sticky;
+  top: 0;
+}
+
+.settings-table tbody tr:hover td {
+  background: var(--bg-raised);
+}
+
+.settings-table .row-label {
+  font-variant-numeric: normal;
+}
+
+/* Key/value tables (settings values, service info): the label column shrinks to
+   its content and the value stays left-aligned — right-aligned paths read badly. */
+.settings-table.kv td:first-child {
+  white-space: nowrap;
+  padding-right: 28px;
+  color: var(--muted);
+}
+
+.settings-table.kv td:last-child {
+  text-align: left;
+}
+
+.settings-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.settings-list li {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-pane);
+  margin-bottom: 8px;
+}
+
+.settings-list .item-title {
+  font-weight: 600;
+}
+
+.settings-list .item-meta {
+  margin-top: 3px;
+  font-size: 12px;
+  color: var(--muted);
+  word-break: break-word;
+}
+
+.settings-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  font-size: 10.5px;
+  font-weight: 500;
+  color: var(--muted);
+  vertical-align: 1px;
+}
+
+.settings-tag.on {
+  border-color: var(--ok);
+  color: var(--ok);
+}
+
+.settings-tag.off {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+/* Placeholder sections: say what is planned instead of faking a control. */
+.settings-todo {
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  background: var(--bg-pane);
+}
+
+.settings-todo ul {
+  margin: 8px 0 0;
+  padding-left: 20px;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.settings-todo li {
+  margin: 4px 0;
+}
+
+.settings-empty {
+  color: var(--muted);
+  font-size: 12.5px;
+  padding: 10px 0;
+}
+
+.settings-error {
+  color: var(--danger);
+  font-size: 12.5px;
+}
+
+/* Toolbar row above a report: the model filter and its caption. */
+.settings-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 18px;
+}
+
+.settings-toolbar label {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.settings-select {
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--text);
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 8px;
+  max-width: 360px;
+}
+
+.settings-toolbar-note {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* Calendar heatmap: columns are weeks, cells are days. The month label sits on
+   top of its week column, so it stays aligned without pixel math. */
+.heatmap-scroll {
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.heatmap {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+}
+
+.heat-weekdays {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 10px;
+  color: var(--muted);
+  text-align: right;
+  flex: 0 0 auto;
+}
+
+.heat-weekdays > div {
+  height: 12px;
+  line-height: 12px;
+}
+
+.heat-weekdays .heat-month {
+  height: 14px;
+}
+
+.heat-cols {
+  display: flex;
+  gap: 3px;
+}
+
+.heat-col {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 0 0 auto;
+}
+
+.heat-month {
+  height: 14px;
+  font-size: 10px;
+  line-height: 14px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.heat-cell {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  background: var(--heat-0);
+}
+
+.heat-cell.level-0 {
+  background: var(--heat-0);
+}
+
+.heat-cell.level-1 {
+  background: var(--heat-1);
+}
+
+.heat-cell.level-2 {
+  background: var(--heat-2);
+}
+
+.heat-cell.level-3 {
+  background: var(--heat-3);
+}
+
+.heat-cell.level-4 {
+  background: var(--heat-4);
+}
+
+/* Days after today: not "zero tokens", just not yet. */
+.heat-cell.future {
+  background: transparent;
+}
+
+.heat-cell.today {
+  box-shadow: inset 0 0 0 1px var(--muted);
+}
+
+/* Hovering a cell highlights it without resizing the grid. */
+.heat-cell[data-day]:hover {
+  outline: 1px solid var(--text);
+}
+
+/* Hover card content. Fixed position + high z-index, driven by showHeatTip(). */
+.heat-tip {
+  position: fixed;
+  z-index: 50;
+  max-width: 320px;
+  padding: 8px 10px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  font-size: 12px;
+  line-height: 1.5;
+  pointer-events: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.heat-tip[hidden] {
+  display: none;
+}
+
+.heat-tip-head {
+  color: var(--muted);
+  font-size: 11.5px;
+  margin-bottom: 3px;
+}
+
+.heat-tip-strong {
+  font-weight: 600;
+}
+
+.heat-tip-dim {
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.heatmap-legend {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  margin-top: 8px;
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.heatmap-legend .heat-cell {
+  margin: 0 1px;
+}
+
+.settings-page code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+  color: var(--md-code);
+}
+
 .item {
   padding: 9px 10px;
   border-radius: 8px;
@@ -171,13 +776,29 @@ body {
   padding: 0 5px;
   border-radius: 4px;
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   font-size: 10px;
   vertical-align: 1px;
 }
 
 .item.pending .name {
   color: var(--accent);
+}
+
+/* Activity indicator: a session (or a folder containing sessions) mid-run. */
+.run-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 6px;
+  border-radius: 50%;
+  vertical-align: 1px;
+  background: var(--ok);
+  animation: pulse 1.2s infinite;
+}
+
+.running-text {
+  color: var(--ok);
 }
 
 .item .sub {
@@ -355,8 +976,8 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  background: #14101d;
-  border: 1px dashed #4a3f63;
+  background: var(--surface-3);
+  border: 1px dashed var(--image-border);
   color: var(--md-code);
   border-radius: 7px;
   padding: 4px 9px;
@@ -393,7 +1014,7 @@ body {
   display: block;
   height: 13px;
   border-radius: 6px;
-  background: linear-gradient(90deg, #1b212a 25%, #242c37 50%, #1b212a 75%);
+  background: linear-gradient(90deg, var(--skeleton-1) 25%, var(--skeleton-2) 50%, var(--skeleton-1) 75%);
   background-size: 200% 100%;
   animation: shimmer 1.2s ease-in-out infinite;
 }
@@ -416,7 +1037,7 @@ body {
 }
 
 .msg pre {
-  background: #0b0e13;
+  background: var(--code-bg);
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 10px 12px;
@@ -436,9 +1057,9 @@ body {
 }
 
 .thinking-block {
-  border-left: 2px solid #6b5b95;
+  border-left: 2px solid var(--thinking-border);
   padding-left: 12px;
-  color: #b9aee0;
+  color: var(--thinking-text);
   margin: 6px 0;
   font-size: 13px;
   line-height: 1.65;
@@ -447,7 +1068,7 @@ body {
 
 .thinking-block > summary {
   cursor: pointer;
-  color: #8f83b8;
+  color: var(--thinking-muted);
   font-size: 12px;
   user-select: none;
 }
@@ -467,7 +1088,7 @@ body {
 
 .tool-result > summary {
   cursor: pointer;
-  color: #c3a6ff;
+  color: var(--tool-accent);
   font-size: 12px;
   font-weight: 600;
   user-select: none;
@@ -479,14 +1100,14 @@ body {
   max-width: 860px;
   min-width: 0;
   background: var(--tool);
-  border: 1px solid #3a3050;
+  border: 1px solid var(--tool-border);
   border-radius: 10px;
   padding: 7px 11px;
 }
 
 .tool-group > summary.tool-group-summary {
   cursor: pointer;
-  color: #c3a6ff;
+  color: var(--tool-accent);
   font-size: 12.5px;
   font-weight: 600;
   user-select: none;
@@ -519,8 +1140,8 @@ body {
 .tool-group .tool-chip,
 .tool-group .tool-result {
   margin: 0;
-  background: #14101d;
-  border: 1px solid #2f2740;
+  background: var(--surface-3);
+  border: 1px solid var(--tool-border-soft);
   border-radius: 7px;
   padding: 5px 9px;
   font-size: 12px;
@@ -528,8 +1149,8 @@ body {
 
 .tool-group .tool-chip pre {
   margin: 5px 0 0;
-  background: #0b0e13;
-  border: 1px solid #2f2740;
+  background: var(--code-bg);
+  border: 1px solid var(--tool-border-soft);
   border-radius: 6px;
   padding: 6px 8px;
   overflow-x: auto;
@@ -540,7 +1161,7 @@ body {
 }
 
 .tool-group .tool-output {
-  color: #b8c4d4;
+  color: var(--tool-output);
 }
 
 /* ---------------------------------------------------------------- markdown */
@@ -763,7 +1384,7 @@ body {
 }
 
 .stat-select:hover {
-  border-color: #3a4557;
+  border-color: var(--border-hover);
 }
 
 .stat-select:focus {
@@ -788,7 +1409,7 @@ body {
 }
 
 .stat.speed.idle-speed {
-  color: #4a5566;
+  color: var(--faint);
 }
 
 .ctx-bar {
@@ -796,7 +1417,7 @@ body {
   width: 56px;
   height: 5px;
   border-radius: 3px;
-  background: #2a323e;
+  background: var(--track);
   overflow: hidden;
 }
 
@@ -821,7 +1442,7 @@ body {
   justify-content: space-between;
   gap: 8px;
   padding: 3px 8px;
-  background: #10141b;
+  background: var(--surface-2);
   border: 1px solid var(--border);
   border-bottom: none;
   border-radius: 8px 8px 0 0;
@@ -854,7 +1475,7 @@ body {
 
 .mermaid-body {
   padding: 12px 10px;
-  background: #10141b;
+  background: var(--surface-2);
   border: 1px solid var(--border);
   border-radius: 0 0 8px 8px;
   overflow-x: auto;
@@ -1012,7 +1633,7 @@ body {
 }
 
 .code-block .token.deleted {
-  color: #ea7f81;
+  color: var(--syntax-deleted);
 }
 
 .code-block .token.inserted {
@@ -1030,7 +1651,7 @@ body {
 .tool-chip {
   display: block;
   background: var(--tool);
-  border: 1px solid #3a3050;
+  border: 1px solid var(--tool-border);
   border-radius: 8px;
   padding: 6px 10px;
   font-size: 12px;
@@ -1040,7 +1661,7 @@ body {
 }
 
 .tool-chip > summary.tool-name {
-  color: #c3a6ff;
+  color: var(--tool-accent);
   font-weight: 600;
   cursor: pointer;
   user-select: none;
@@ -1067,7 +1688,7 @@ body {
 
 .tool-chip pre {
   margin: 4px 0 0;
-  background: #14101d;
+  background: var(--surface-3);
   overflow-x: auto;
   max-width: 100%;
 }
@@ -1077,6 +1698,7 @@ body {
 }
 
 #composer {
+  position: relative;
   border-top: 1px solid var(--border);
   padding: 12px 18px 10px;
   background: var(--bg-pane);
@@ -1200,4 +1822,270 @@ button:disabled {
   padding: 24px;
   text-align: center;
   font-size: 13px;
+}
+
+/* ---------------------------------------------------------- extension UI */
+/*
+ * `ctx.ui.*` from extensions, mirrored in the browser: notify → toast,
+ * setStatus → chip, setWidget → text block, select/confirm/input/editor →
+ * modal. pi's RPC extension-UI protocol, see src/server/extensionUi.ts.
+ *
+ * Every piece that can be toggled with `hidden` needs its own
+ * `[hidden]`/`.hidden` rule, because `display: flex` here would otherwise beat
+ * the user-agent's `[hidden] { display: none }`.
+ */
+
+.ui-toasts {
+  position: fixed;
+  top: 14px;
+  right: 14px;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: min(380px, calc(100vw - 28px));
+  pointer-events: none;
+}
+
+.toast {
+  pointer-events: auto;
+  cursor: pointer;
+  padding: 9px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--muted);
+  background: var(--bg-raised);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.45;
+  box-shadow: var(--shadow);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.toast-info { border-left-color: var(--accent); }
+.toast-warning { border-left-color: var(--warning); }
+.toast-error { border-left-color: var(--danger); }
+
+.ext-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.ext-status[hidden] { display: none; }
+
+.ext-status-chip {
+  font-size: 11px;
+  line-height: 1.3;
+  color: var(--muted);
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px 9px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.ext-widget {
+  flex-shrink: 0;
+  padding: 6px 18px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-pane);
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.ext-widget[hidden] { display: none; }
+
+#ext-widget-above {
+  border-top: none;
+  border-bottom: 1px solid var(--border);
+}
+
+.ext-widget-block + .ext-widget-block { margin-top: 6px; }
+
+.ui-dialog {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgb(0 0 0 / 45%);
+}
+
+.ui-dialog.hidden { display: none; }
+
+.ui-dialog-card {
+  width: min(460px, 100%);
+  max-height: min(80vh, 640px);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 18px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: var(--bg-pane);
+  box-shadow: var(--shadow);
+}
+
+.ui-dialog-title {
+  font-weight: 600;
+  font-size: 14px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.ui-dialog-body {
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ui-dialog-message {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.ui-dialog-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ui-dialog-option {
+  text-align: left;
+  background: var(--bg-raised);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 9px 12px;
+  font-weight: 500;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.ui-dialog-option:hover { border-color: var(--accent); }
+
+.ui-dialog-input,
+.ui-dialog-editor {
+  box-sizing: border-box;
+  width: 100%;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text);
+  padding: 9px 11px;
+  font: inherit;
+}
+
+.ui-dialog-editor {
+  min-height: 150px;
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.ui-dialog-input:focus,
+.ui-dialog-editor:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.ui-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.ui-dialog-cancel {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border);
+}
+
+/* ------------------------------------------------------ slash-command menu */
+/*
+ * Floats above the composer while the input is a bare `/token`. Anchored to the
+ * composer (`position: relative`) so it overlays the transcript instead of
+ * pushing it, and only opens when nothing but the command is being typed.
+ */
+
+.command-menu {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: calc(100% + 6px);
+  z-index: 5;
+  max-height: min(320px, 45vh);
+  overflow-y: auto;
+  padding: 4px;
+  background: var(--bg-pane);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+}
+
+.command-menu[hidden] { display: none; }
+
+.command-item {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  background: transparent;
+  color: var(--text);
+  border: none;
+  border-radius: 8px;
+  text-align: left;
+  font-weight: 500;
+}
+
+.command-item.selected { background: var(--bg-raised); }
+
+.command-name {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+
+.command-source {
+  padding: 0 6px;
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.command-source-extension { color: var(--warning); border-color: var(--warning); }
+.command-source-prompt { color: var(--ok); border-color: var(--ok); }
+.command-source-skill { color: var(--accent); border-color: var(--accent); }
+
+.command-desc {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

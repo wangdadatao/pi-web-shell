@@ -66,6 +66,13 @@ npm run plan         # 查看 docs/PLAN.md 的进度和下一项
 - ```mermaid 围栏渲染成图表（flowchart / sequence / gantt / pie 等），带复制源码按钮；语法错误时显示原因并展开源码。Mermaid 约 3.4 MB，首次出现图表时才按需加载。
 - 每条助手回复右上角有复制按钮（悬停出现），只复制正文，不含思考与工具输出。
 - 顶部统计条：上下文进度条、累计 token、缓存命中、花费、轮数/工具数、实时 token/s。
+- 左下角「⚙ 设置」进入设置页（左菜单 + 右内容，Esc 返回）：
+  - **token 统计**：全部会话的用量与花费，按天 / 模型 / 项目 / 会话拆开；带 GitHub 式每日热力图
+    （颜色越亮 = 当天 token 越多）和模型筛选（默认全部模型）。只读，数据来自会话文件。
+  - **技能 / MCP / 插件**：pi 当前会加载的 skills、mcp.json 里的 server、settings.json 里的资源路径（只读）。
+  - **语言、主题**：可切换，实时生效。主题三档（跟随系统 / 深色 / 浅色），语言 `中文` / `English`（只翻译外壳自身，
+    会话内容与 pi 的输出是数据，不翻）。偏好存 localStorage。
+  - 模型配置、agent 设置：目前只显示现状，写操作标注为「计划中」。
 - 连续的工具调用聚合成一个折叠块（如「思考 + 12 次工具调用 · read ×4、bash ×8」），默认收起。
 - 一次调用的入参和结果是同一条，展开即可核对。
 - 输入框：Enter 发送、Shift+Enter 换行、粘贴/拖拽/选择图片。
@@ -137,11 +144,14 @@ npm run shot -- <url> <out.png> --wait 6000 \
 src/shared/types.ts            wire 类型
 src/server/config.ts           配置
 src/server/sessionIndex.ts     会话扫描/缓存/分组
+src/server/usageStats.ts       跨会话 token / 花费统计
+src/server/environment.ts      只读读 pi 的配置、skills、mcp.json
 src/server/piSession.ts        单个 pi RPC 子进程
 src/server/sessionRegistry.ts  子进程生命周期
 src/server/httpServer.ts       路由 + SSE + 静态文件
 src/server/index.ts            入口
 src/web/                       前端（无构建步骤）
+src/web/i18n.js               外壳自身的文案字典（zh-CN / en）
 src/web/vendor/                vendored 的 marked / DOMPurify / Prism / Mermaid（由 npm run vendor 生成）
 scripts/plan.ts                计划进度工具
 scripts/screenshot.ts          CDP 截图 + 断言

@@ -30,7 +30,6 @@ async function main(): Promise<void> {
   const address = server.address() as AddressInfo;
   const url = `http://${config.host}:${address.port}/`;
 
-  // Avoid leaking AWT/Java side-effects from child tools writing to our stdout.
   process.stdout.write(
     [
       "",

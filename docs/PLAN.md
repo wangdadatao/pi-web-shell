@@ -218,21 +218,39 @@ P1 — 真实缺陷，建议尽快修（2026-10-03 已全部修复并提交）�
 - [x] rename 跨会话竞态：`app.js` 对未打开会话先 `openSession()` 但 EventSource 建连即返回，pi 冷启动期间 `registry.get` 未命中 → 404 — 修法（服务端）：handleRename 未命中时 fallback `acquire`（与流同去重），rename 完 release — 验证：服务冷启动后直接 rename 未打开会话返回 `{"ok":true}`，且 fallback 的 ref 正确归还（idle 3s 后子进程回收）
 - [x] 符号链接路径双开会话：registry 键与校验用 `resolve()`（不展开 symlink），sessionsDir 处于符号链接下时同一路径注册两个子进程写同一文件 — 修法：新增 `paths.ts#normalizeSessionKey`（realpath 至最深存在祖先，pending 会话键落盘前后一致），registry 全部键与 httpServer 三个入口校验统一归一 — 验证：隔离 sessionsDir 走 symlink，同一文件经 link/real 两路径各开流，均收到 snapshot 且服务端只有 1 个子进程；新增 `test/paths.test.ts` 5 例（symlink 解析/pending 一致性/幂等），单测 18/18
 
-P2 — 健壮性：
+P2 — 健壮性（2026-10-03 全部修复，含一项新挖出来的真 bug）：
 
-- [ ] `piSession.ts:163` stdin.write 无 error 监听：子进程自行崩溃瞬间写入会抛未捕获 EPIPE 异常，整个服务崩（launchd 会拉起但所有会话断线）— 修法：`child.stdin.on("error", …)` 静默兜底一行
-- [ ] EventSource 无限自动重连：服务端 finish() 关流后浏览器默认无限重连 `/api/stream`，会把刚回收的子进程重新拉活 — 修法：onerror 中 close 并提示手动重开，或限次重连
-- [ ] 前端 `api.abort()` 不检查响应：停止失败时用户无感知（后端 60s RPC 超时也拿不到反馈）— 修法：检查 res.ok，失败给 notice
+- [x] `piSession.ts` stdin.write 无 error 监听：**子进程把自己的 stdin 关掉、而我们的写端还「可写」时**，写入会抛**未处理**的 `write EPIPE` 事件，整个服务进程直接死（launchd 会拉起，但所有会话一起断线）— 修法：`child.stdin.on("error", …)` 记一行日志兜底。请求本身不会丢：`exit` 处理器会把 pending 全部 reject
+  验证：新增 `test/piSession.test.ts`，用「关掉 fd 0 但还活着」的 sh 子进程复现（要把 64KB 管道缓冲写满，内核才报 EPIPE）。断言跑在**子进程**里——要验的是「进程别死」，所以失败必须是退出码而不是把测试进程带崩：**去掉监听后 fixture 以 `node:events:497 Unhandled 'error' event: write EPIPE` 退出 1**，加上后 `survived` / exit 0
+- [x] `/api/stream` 的 EventSource 无限自动重连：服务端 `finish()` 关流后浏览器会一直重连，**每次重连都让服务端 acquire 一次 → 拉起一个没人看的 pi 子进程** — 修法：接管重连（`STREAM_MAX_RETRIES=3`，0.5s/1s/2s 退避），用尽后 `close()` 并给一条可操作的提示（「在左侧点一下这个会话即可重连」）
+  验证：杀服务端进程 → 页面重试 3 次后 `streamEnded=true`、`state.stream=null`、恰好一条 `.msg.error`、状态 idle；杀单个 pi 子进程 → **自愈**（新流 readyState=1、服务端换上新子进程、快照重绘把临时提示冲掉）
+- [x] 前端 `api.abort()` 不检查响应：停止失败时用户无感知（后端 RPC 超时的话按钮已灰、会话还在跑）— 修法：检查 `res.ok` 抛错，调用处用 `chat.abortFailed` 提示
 
-P3 — 代码质量 / 小问题（可攒着一起清）：
+P2.1 — 顺手挖出来的真 bug（本轮才发现，比上面三条都严重）：
 
-- [ ] `httpServer.ts:129` `void config;` 是压 unused 告警的应付写法，连带 `collectSessions` 内重复解构 — 应在上层解构一次
-- [ ] `index.ts:33` 「Avoid leaking AWT/Java side-effects」注释与本项目无关（疑从其他项目带入），应删除
-- [ ] `sessionIndex.ts:152` createdAt 缺头时间戳时回退 mtime，「创建时间」语义变成「修改时间」
-- [ ] `readSlices` 头尾切片可能截断 UTF-16 代理对，占位符会污染标题最后一个字（极低概率）
-- [ ] ImageStore 单图超过 256MB 上限时绕过缓存（每次 snapshot 重新 put）；由 pi 历史写入的 base64 理论可超，快照仍正确只是浪费
-- [ ] `plan.ts` 总数把「已知取舍」3 项也计入（110），进度条分母含非待办项
-- [ ] `handleDeleteFolder` 串行删除大会话目录时可能顶到 HTTP 超时，可改 `Promise.all` 并发（注意失败聚合语义不变）
+- [x] **pi 子进程崩溃后，那个会话就永久废了**。子进程退出后 `SessionRegistry.live` 仍留着这条记录、`rpc` 指向死进程；此后重新打开会话 / 前端重连 / `curl /api/stream` 都会拿到这具「尸体」：写入被静默丢弃、`get_state` 永不返回，**流永远等不到 snapshot**（实测 `curl -m 5` 直接超时），而挂着的那条流还占着 ref，连 15 分钟空闲回收都救不回来
+  修法四处：`ManagedSession.dead` 标记；`onExit` 标 dead 且在无人消费时**立即** dispose；`acquire()` 遇到 dead 先 dispose 再 spawn；`release()` 在最后一个消费者离开且 dead 时立即 dispose；外加 `PiRpcSession.stop()` 对已退出的子进程直接返回（否则要白等 5s 宽限期才对死 pid 发 SIGKILL）
+  验证：杀子进程 → 服务端换新子进程、页面自愈不挂骨架屏；同一会话重新 `curl /api/stream` 能拿到快照（修复前 5s 超时）
+- [x] 上条的评审补丁：`acquire()` 对 dead 条目 `await dispose` 后直接往下走，若等待期间别的消费者恰好
+  spawn 了新子进程，落空后会把 `live` 覆盖成第二个写者（窗口经 `stop()` 的 exited 快路径已收窄到
+  微任务级，但不变量不该依赖事件循环时序）；且 `release()` 按路径键查表，会命中替换者、错扣它的 refs —
+  修法三处：dispose 后**循环重解析**；`release()` 改按 **managed 实例**归还；dispose 拆出按**同一性**校验的
+  `retire()`，被替换的旧条目不能把新条目带下去
+  验证：新增 `test/sessionRegistry.test.ts`（fake-pi 二进制，真子进程）：并发双 acquire 崩溃会话 →
+  同一 ManagedSession、refs=2、总共只 spawn 过 2 个子进程；旧条目晚到的 release 后新条目 refs 不动、
+  其子进程仍存活（改回路径键实现时第二条断言失败）
+
+P3 — 代码质量 / 小问题（2026-10-03 全部清完）：
+
+- [x] `httpServer.ts` `void config;` 是压 unused 告警的应付写法 — 直接删掉（`config` 在闭包里真用得到，不需要压）
+- [x] `index.ts` 「Avoid leaking AWT/Java side-effects」注释与本项目无关（疑从其他项目带入）— 删除
+- [x] `sessionIndex.ts` createdAt 缺头时间戳时回退 mtime，「创建时间」变成「修改时间」— 改用 `birthtime`（拿到 0 时才退回 mtime）
+- [x] ~~`readSlices` 头尾切片可能截断 UTF-16 代理对~~ — **这条的前提是错的，所以代码没动，只补了注释**：实测被截断的 UTF-8 序列解码出来是 U+FFFD，**永远不会是「半个代理对」**；而且坏掉的那行必然是残行，`lines()` 里的 `JSON.parse` 会失败并丢弃它，到不了标题
+- [x] ImageStore 单图超过上限时每次 snapshot 重新 put（重复 sha1、重复解析尺寸）— 修法：`evict(pin)` 永不淘汰**刚写入**的那条（等下一次插入再淘汰它），代价是内存上限最多被单图超出一次
+- [x] `plan.ts` 进度条分母把「已知取舍」3 项也计入，`next` 还会指向一个没人能勾的项 — 修法：非待办分区（`NON_WORK_SECTIONS`）不参与进度与 next，列表里用 `•` 显示
+- [x] `handleDeleteFolder` 串行删除大会话目录可能顶到 HTTP 超时 — 改 `Promise.all`，报告结构不变（只有顺序变）
+  验证：临时 sessions 目录放 40 个会话 + PATH 里放一个 `sleep 0.2` 的假 `trash`（串行需要 8s）→ 实测 **0.76s**、`{"ok":true,"deleted":40}`、目录本身存活、40 个文件都进了「废纸篓」
+
 
 结论记录：整体无明显过度设计（零依赖、无构建的约束贯彻得好），vendor 方案与错误处理风格符合本项目定位；上述 P1 三项为迭代修复优先级。
 
@@ -277,3 +295,80 @@ M2.7 的一刀切折叠难用：开关在右上角、离它控制的侧栏太远
 - [x] 按需加载 3.4 MB 包：首个图表出现才插 `<script src="/vendor/mermaid.min.js">`；`npm run vendor` 与许可证清单同步 — 验证：无图表时 `typeof globalThis.mermaid === "undefined"`，注入后为 `object`
 - [x] 与 Prism 共存：同一气泡里 mermaid 块 + json 代码块，后者仍有 `.token` 高亮；流式 `text_end` 重写气泡不重复渲染 — 验证：`.mermaid-block svg` = 1 且 `.code-block .token` > 0；连渲两次仍只有 1 个 `.mermaid-body`
 - 回归：typecheck 干净；单测 31/31；`ui-test-sidebar` 26 项仍全过
+
+## M2.9 输出速度口径修正（2026-10-03）
+
+问题：M1.6 的速度是「从 `agent_start` 起算的整轮平均」，但分子在 provider 报出 usage 后就
+换成单条消息的累计值 —— 一量两用拆分不开。后果是工具轮被工具耗时稀释，多轮时分子还会
+被新消息的小值覆盖而断崖下跌。CLI 的 `~/.pi/agent/extensions/token-speed.ts` 是另一个
+方向的偏差：计时从首个 `text_delta` 起，分子却含 thinking token，先思考后出字的轮次虚高数倍。
+
+- [x] Web 口径改为按单条 assistant 消息：`message_start` 重置计数、首个 delta 启动时钟、文本/思考/工具参数三类 delta 都计入分子 — 验证：`scripts/ui-test-token-speed.ts` 15 项断言全过，首 token 前挂 2s 延迟时 `streamStart - t0` = 2045ms（时钟没被提前启动）
+- [x] `message_end` 采用消息里权威的 `usage.output` 冻结终值（provider 只在收尾报 usage 时也能拿到真实值）— 验证：终值按 50 token 计且 `≈` 前缀消失
+- [x] 工具参数也是产出 token：只有 `toolcall_delta` 的轮次同样能测到速度（旧实现此时分子为 0）— 验证：10 次 `toolcall_delta` 得 30 token
+- [x] 多轮不再断崖：第二条消息重置后速率与第一条同量级 — 验证：25.4 → 26.3 tok/s
+- [x] CLI 扩展同步修正：时钟改由任意 `*_delta`（含 `thinking_delta`）启动、估算同时统计 text/thinking/toolCall 内容、估算器换成与 Web 一致的 CJK 加权（1.4 / 4 字每 token）— 验证：esbuild 转译 + `node --check` 通过（该文件不在本仓库，无法进回归）
+- 回归：把旧实现临时放回，速度断言立刻失败 3 项（证明断言有效），恢复后 15/15 过；typecheck 干净
+
+## M2.10 设置页（2026-10-03）
+
+问题：外壳的偏好和 pi 的配置都散在文件里，界面上没有任何入口；也没地方看跨会话花了多少。
+
+范围：先做「只读、不碰 pi 子进程」的部分，可写/难做的先占位（不摆假控件）。
+
+- [x] 设置页外壳：文件夹栏左下角固定入口（不随列表滚动）→ `#app[data-view="settings"]` 隐藏三个 pane，
+  由 `#settings-view` 左菜单 + 右内容占满窗口，Esc / `‹` 返回 — 验证：CDP 断言 `dataset.view`、
+  Esc 后回到 `chat`；`scrollTop=844` 时 `.pane-foot` 的 top 不变、`list.bottom === foot.top === 649`
+- [x] 侧栏全屏态下设置菜单不能被一起隐藏（`.pane:not(#settings-nav)`）— 验证：`data-sidebar=fullscreen`
+  下 `#settings-nav` width 240 / opacity 1 / pointer-events auto，而 `#folders` display none
+- [x] token 统计：`src/server/usageStats.ts` 扫 session jsonl 里 assistant 消息的 `usage`，按天 / 模型 /
+  项目 / 会话合计 input/output/cache/reasoning/花费 — 验证：212MB/153 文件冷扫 0.5s；单测 4 例
+  （两种落盘布局、截断行忽略、缓存只重读变化的文件）
+- [x] 技能 / MCP / 插件清单：`src/server/environment.ts` 扫 agent 目录 `skills/`（含 YAML 块标量
+  `description: |`）、读 `mcp.json`、列出 `settings.json` 的资源数组 — 验证：单测 3 例；真实 agent 目录下
+  列出 4 个技能与 0 个 MCP server
+- [x] 只读但真实：模型配置 / agent 设置两页显示 pi 当前会读到的默认值与文件状态（不摆假表单）；
+  语言/主题与所有写操作明写「计划中」 — 验证：截图 + DOM 断言
+- [x] 每日热力图（GitHub 式日历）：一列一周、一格一天（周一起），四档蓝色分位深浅；
+  未来日期不留色块，今天带描边 — 验证：真实数据 9 列 / 62 天，
+  分档为 0:38、1:7、2:6、3:6、4:5（无单日翘尾把其余压成最浅）；月份标签只在月首列出现
+- [x] 模型筛选：默认为「全部模型」，切换后卡片 + 热力图 + 按天/按项目/按会话都只看该模型 —
+  验证：切到 `gptge/glm-5.3` 后总花费 $62.36→$26.10、着色格 28→1（另 4 格是图例）、表格 4→3
+  （筛选时隐藏「按模型」全量表），而热力图列数仍为 9（横轴不跟着缩）
+- [x] 热力图悬停卡片：不用原生 `title`（~1s 延迟 + 系统样式），改用 `#heat-tip` 固定定位卡片，
+  内容为 `日期+周几 / 总 token / 输入·输出（含思考）/ 缓存读写 / 花费·调用次数`；空记录日显示「没有记录」，
+  未来日期不挂数据；卡片贴上方、越界时自动翻到下方并横向夹紧，滚动/关闭设置页时隐藏 —
+  验证：CDP 事件断言 `hidden=false` 且内容逐项匹配、`above=true`、左右均在视口内、
+  `pointerout` 后隐藏、DOM 里 `title` 数量 0
+- [x] 服务端带 per-model 切片（`models: { [provider/model]: { totals, byDay, byProject, bySession } }`），
+  扫描时多记一层 day × model（不能用 `byDay × byModel` 相乘代替）— 验证：单测新增 1 例
+  （一个文件两个模型两天，断言不串天）；真实数据 payload 98KB、冷扫 0.5s
+- [x] `/api/settings/*` 加 `Cache-Control: no-store`（顺手给 `sendJson` 全量加上）— 验证：响应头
+- 回归：typecheck 干净；单测 39/39（新增 8）
+
+## M2.11 语言与主题（2026-10-03）
+
+问题：设置页里「语言、主题」是占位。当时的顾虑是「要读 pi 的主题文件、要抽 100+ 条中文」。
+结论：**外壳自己的偏好，跟 pi 解耦**，两边都不依赖外部。
+
+- [x] 主题三档（跟随系统 / 深色 / 浅色）+ 语言两档（中文 / English），实时生效，存 localStorage —
+  验证：CDP 断言 `data-theme` 切换、`document.documentElement.lang` 切换
+- [x] 浅色配色：`--md-*` / `--syntax-*` 取 pi 的 light 主题解析值，界面色自己定；
+  并**把原来写死在样式表各处的 20 处颜色收成角色变量**（`--tool-border`/`--thinking-text`/
+  `--skeleton-*`/`--code-bg` …），否则第二套主题无从附着 — 验证：浅色下逐屏截图
+  （对话/工具块/代码高亮/热力图/表格），`npm run theme:check` 现在两套主题各 18/18 匹配
+- [x] `theme:check` 覆盖浅色块，且故意改错一个值能被抓出（`--md-code` → 报 drift 并指出两边的值）—
+  验证：故意注入 `#ff0000` 后 ❌，还原后 ✅
+- [x] 首屏不闪：index.html 内联脚本在样式表前算好 `data-theme` / `lang` — 验证：seed localStorage 后
+  首次加载即为浅色（截图无深色瞬间）
+- [x] i18n：`src/web/i18n.js` 字典 + `t()` 插值 + `data-i18n*` 静态标记，翻译 74 处 app.js 文案与
+  24 处 HTML 标记 — 验证：English 下五个设置页 `missingKeys` 空、CJK 泄漏 0（除语言选择器
+  里「中文」自身与用户数据）
+- [x] 语言切换 reload 而非原地重译（正文气泡的文案是渲染时带上的）— 验证：切到 English 后页面、
+  侧栏、统计条、设置页全为英文
+- [x] 服务端不再返回中文脚注：`notes: string[]` → `noteIds: string[]`，措辞进客户端字典 —
+  验证：单测断言 `noteIds: ["readonly","mcpNoConnect"]`；English 下脚注为英文
+- [x] 顺手修真 bug：设置页快速切换菜单时，第二次进入的分页会永远停在「正在读取…」
+  （`settingsLoading` 单标志把另一次请求挡掉了）→ 改成按 payload 键记 `pendingKey` / `failedKey`
+  并递归补取 — 验证：连点 usage→resources→models，三页都渲染出内容
+- 回归：typecheck 干净；单测 39/39；`ui-test-sidebar` / `ui-test-mermaid` / `ui-test-token-speed` 全过

@@ -1,6 +1,8 @@
 import type { Config } from "./config.ts";
 import { PiRpcSession } from "./piSession.ts";
+import { applyExtensionUiState, emptyExtensionUiState } from "./extensionUi.ts";
 import { normalizeSessionKey } from "./paths.ts";
+import type { ExtensionUiState } from "../shared/types.ts";
 
 export interface ManagedSession {
   path: string;
@@ -9,8 +11,25 @@ export interface ManagedSession {
   rpc: PiRpcSession;
   /** Number of open SSE streams / active consumers. */
   refs: number;
+  /** True between `agent_start` and `agent_settled` for this subprocess. */
+  streaming: boolean;
   idleTimer: NodeJS.Timeout | null;
+  /**
+   * The subprocess exited. A dead entry must never be handed out again: pi
+   * writes to a destroyed stdin without complaint and never answers, so a
+   * stream attached to it would hang forever waiting for a snapshot instead of
+   * spawning a fresh child.
+   */
+  dead: boolean;
+  /**
+   * Latest fire-and-forget extension state (`setStatus` / `setWidget` /
+   * `setTitle`). Kept here rather than in the RPC client because it must
+   * outlive a single browser stream: the stream snapshot replays it.
+   */
+  ui: ExtensionUiState;
 }
+
+type ActivityListener = (path: string, running: boolean) => void;
 
 /**
  * Keeps one live pi RPC subprocess per opened session.
@@ -23,36 +42,62 @@ export class SessionRegistry {
   private readonly config: Config;
   private readonly live = new Map<string, ManagedSession>();
   private readonly starting = new Map<string, Promise<ManagedSession>>();
+  private readonly activityListeners = new Set<ActivityListener>();
 
   constructor(config: Config) {
     this.config = config;
   }
 
+  /**
+   * Observe run-state changes for every managed session.
+   *
+   * Distinct from `PiRpcSession.onEvent`: that fires per event on one session,
+   * while this fires only when a session crosses the running/idle boundary and
+   * covers sessions nobody is currently watching.
+   */
+  onActivity(listener: ActivityListener): () => void {
+    this.activityListeners.add(listener);
+    return () => this.activityListeners.delete(listener);
+  }
+
   async acquire(sessionPath: string, cwd: string): Promise<ManagedSession> {
     const key = normalizeSessionKey(sessionPath);
-    const existing = this.live.get(key);
-    if (existing) {
-      existing.refs += 1;
-      this.clearIdle(existing);
-      return existing;
-    }
 
-    const inFlight = this.starting.get(key);
-    if (inFlight) {
-      const managed = await inFlight;
-      managed.refs += 1;
-      this.clearIdle(managed);
-      return managed;
-    }
+    // Loop, never fall through: disposing a dead entry awaits the corpse's
+    // exit, and another caller may register a fresh child for this key during
+    // that wait. Re-resolve so the child is shared instead of duplicated —
+    // two subprocesses on one session file is the thing this registry exists
+    // to prevent.
+    for (;;) {
+      const existing = this.live.get(key);
+      if (existing?.dead) {
+        // Replace the corpse with a fresh child (we are about to be a consumer).
+        await this.dispose(existing.path);
+        continue;
+      }
+      if (existing) {
+        existing.refs += 1;
+        this.clearIdle(existing);
+        return existing;
+      }
 
-    const startPromise = this.spawnSession(key, cwd);
-    this.starting.set(key, startPromise);
-    try {
-      const managed = await startPromise;
-      managed.refs += 1;
-      return managed;
-    } finally {
-      this.starting.delete(key);
+      const inFlight = this.starting.get(key);
+      if (inFlight) {
+        const managed = await inFlight;
+        managed.refs += 1;
+        this.clearIdle(managed);
+        return managed;
+      }
+
+      const startPromise = this.spawnSession(key, cwd);
+      this.starting.set(key, startPromise);
+      try {
+        const managed = await startPromise;
+        managed.refs += 1;
+        return managed;
+      } finally {
+        this.starting.delete(key);
+      }
     }
   }
 
@@ -108,34 +153,62 @@ export class SessionRegistry {
       createdAt: new Date().toISOString(),
       rpc,
       refs: 0,
+      streaming: false,
       idleTimer: null,
+      dead: false,
+      ui: emptyExtensionUiState(),
     };
     this.live.set(sessionFile, managed);
+    this.watch(managed);
     // If no consumer ever attaches (the client failed to open a stream), reap it.
-    managed.idleTimer = setTimeout(() => {
-      void this.dispose(sessionFile);
-    }, this.config.idleTimeoutMs);
-    managed.idleTimer.unref?.();
+    // A run starting before then clears the timer in `setStreaming`.
+    this.armIdle(managed);
     return { managed, state };
   }
 
-  release(sessionPath: string): void {
-    const managed = this.live.get(normalizeSessionKey(sessionPath));
-    if (!managed) return;
+  /**
+   * Hand back one reference.
+   *
+   * Takes the entry itself, not a path: a caller can hold an entry that was
+   * already replaced in `live` (its child died and `acquire` swapped in a
+   * fresh one), and a path-keyed lookup would then decrement the
+   * *replacement's* refs — arming the idle reaper on a child that still has
+   * consumers.
+   */
+  release(managed: ManagedSession): void {
     managed.refs = Math.max(0, managed.refs - 1);
     if (managed.refs > 0) return;
-    managed.idleTimer = setTimeout(() => {
-      void this.dispose(managed.path);
-    }, this.config.idleTimeoutMs);
-    managed.idleTimer.unref?.();
+    // Nobody is left to notice a crash: drop it now so the next `acquire` can
+    // spawn a fresh child, instead of keeping a dead entry warm for 15 minutes.
+    if (managed.dead) {
+      void this.retire(managed);
+      return;
+    }
+    // A running session must not be reaped out from under the agent: refreshing
+    // the page drops the stream, not the work. The timer is re-armed on settle.
+    if (managed.streaming) return;
+    this.armIdle(managed);
   }
 
   async dispose(sessionPath: string): Promise<void> {
     const key = normalizeSessionKey(sessionPath);
     const managed = this.live.get(key);
-    if (!managed) return;
-    this.live.delete(key);
+    if (managed) await this.retire(managed);
+  }
+
+  /**
+   * Tear down one entry, but only if it is still the registered one.
+   *
+   * Identity, not the key, decides: an entry that was already replaced must not
+   * take its replacement — and that replacement's subprocess — down with it.
+   */
+  private async retire(managed: ManagedSession): Promise<void> {
+    if (this.live.get(managed.path) !== managed) return;
+    this.live.delete(managed.path);
     this.clearIdle(managed);
+    // Broadcast before teardown so a subprocess killed mid-run cannot leave a
+    // stale "running" dot behind in every connected client.
+    this.setStreaming(managed, false);
     await managed.rpc.stop().catch(() => undefined);
   }
 
@@ -158,10 +231,63 @@ export class SessionRegistry {
       createdAt: new Date().toISOString(),
       rpc,
       refs: 0,
+      streaming: false,
       idleTimer: null,
+      dead: false,
+      ui: emptyExtensionUiState(),
     };
     this.live.set(sessionPath, managed);
+    this.watch(managed);
     return managed;
+  }
+
+  /**
+   * Subscribe to one subprocess's run boundaries.
+   *
+   * pi reports `agent_start` / `agent_settled` on the RPC stream for the whole
+   * life of the process, whether or not a browser is streaming it. That makes
+   * this the authoritative "AI is working" signal for sessions we own — no
+   * polling and no session-file heuristics.
+   */
+  private watch(managed: ManagedSession): void {
+    managed.rpc.onEvent((event) => {
+      if (event.type === "agent_start") this.setStreaming(managed, true);
+      else if (event.type === "agent_settled") this.setStreaming(managed, false);
+      else if (event.type === "extension_ui_request") applyExtensionUiState(managed.ui, event);
+    });
+    managed.rpc.onExit(() => {
+      managed.dead = true;
+      this.setStreaming(managed, false);
+      // Crash with nobody watching? Then there is nothing to keep alive.
+      if (managed.refs === 0) void this.retire(managed);
+    });
+  }
+
+  private setStreaming(managed: ManagedSession, running: boolean): void {
+    if (managed.streaming === running) return;
+    managed.streaming = running;
+    if (running) {
+      // Never let the idle reaper kill a live run, even if nobody is watching.
+      this.clearIdle(managed);
+    } else if (managed.refs === 0 && !managed.idleTimer && this.live.get(managed.path) === managed) {
+      this.armIdle(managed);
+    }
+    for (const listener of this.activityListeners) {
+      try {
+        listener(managed.path, running);
+      } catch (error) {
+        process.stderr.write(`[pi-shell] activity listener error: ${String(error)}\n`);
+      }
+    }
+  }
+
+  /** Reap a session this many ms after its last consumer leaves and it goes idle. */
+  private armIdle(managed: ManagedSession): void {
+    this.clearIdle(managed);
+    managed.idleTimer = setTimeout(() => {
+      void this.retire(managed);
+    }, this.config.idleTimeoutMs);
+    managed.idleTimer.unref?.();
   }
 
   private clearIdle(managed: ManagedSession): void {

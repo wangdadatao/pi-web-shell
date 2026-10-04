@@ -145,11 +145,15 @@ export class SessionIndex {
     const name = findLastName(tail) ?? findLastName(head);
     const firstUser = findFirstUserText(head);
 
+    // The header timestamp is the creation time. When a file has no header
+    // timestamp, the file's own birth time is the honest fallback — mtime would
+    // silently relabel "created" as "last written".
+    const born = fileStat.birthtimeMs > 0 ? fileStat.birthtime : fileStat.mtime;
     const summary: SessionSummary = {
       path,
       id: header.id ?? basenameWithoutExtension(path),
       cwd: header.cwd,
-      createdAt: header.timestamp ?? fileStat.mtime.toISOString(),
+      createdAt: header.timestamp ?? born.toISOString(),
       updatedAt: fileStat.mtime.toISOString(),
       mtimeMs: fileStat.mtimeMs,
       sizeBytes: fileStat.size,
@@ -186,6 +190,12 @@ async function readSlices(
     const tailLength = Math.min(TAIL_BYTES, size);
     const tailBuffer = Buffer.alloc(tailLength);
     await handle.read(tailBuffer, 0, tailLength, size - tailLength);
+    // A byte cut can land inside a character, and the decoder answers with
+    // U+FFFD — verified: a truncated UTF-8 sequence never decodes to half of a
+    // surrogate pair, so there is nothing to repair here. Nor can the damage
+    // escape: the mangled line is always a partial line, and a partial line
+    // fails `JSON.parse` inside `lines()`, so it is dropped before it can reach
+    // a title.
     return { head: headBuffer.toString("utf8"), tail: tailBuffer.toString("utf8") };
   } finally {
     await handle.close();

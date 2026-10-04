@@ -11,7 +11,7 @@
  */
 
 import { spawn } from "node:child_process";
-import { mkdtemp, readFile, readdir, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -77,14 +77,28 @@ async function findSession(explicit?: string): Promise<string> {
   return newest.path;
 }
 
-/** Ask pi to export a session, then read the resolved theme variables. */
-async function readPiPalette(sessionPath: string): Promise<Map<string, string>> {
+/**
+ * Ask pi to export a session, then read the resolved theme variables.
+ *
+ * `theme` forces a theme through a throwaway agent directory. That indirection
+ * is needed because `--use-theme` only affects the interactive TUI; the HTML
+ * export resolves the `theme` *setting*, so the only way to see another theme's
+ * resolved hexes is to point pi at a settings.json that asks for it.
+ */
+async function readPiPalette(sessionPath: string, theme?: string): Promise<Map<string, string>> {
   const workDir = await mkdtemp(join(tmpdir(), "pi-theme-"));
   const outputPath = join(workDir, "export.html");
+  let env = process.env;
+  if (theme) {
+    const agentDir = join(workDir, "agent");
+    await mkdir(agentDir, { recursive: true });
+    await writeFile(join(agentDir, "settings.json"), JSON.stringify({ theme }));
+    env = { ...process.env, PI_CODING_AGENT_DIR: agentDir };
+  }
   const child: ChildProcessWithoutNullStreams = spawn(
     process.env["PI_SHELL_PI_BIN"] ?? "pi",
     ["--mode", "rpc", "--session", sessionPath],
-    { stdio: ["pipe", "pipe", "pipe"] },
+    { stdio: ["pipe", "pipe", "pipe"], env },
   );
 
   try {
@@ -132,52 +146,69 @@ async function readPiPalette(sessionPath: string): Promise<Map<string, string>> 
   }
 }
 
+/** The variables of one block of `style.css`, lowercased. */
+function readCssBlock(css: string, selector: string): Map<string, string> {
+  const block = new RegExp(`${selector}\\s*\\{([\\s\\S]*?)\\n\\}`).exec(css)?.[1] ?? "";
+  const values = new Map<string, string>();
+  for (const match of block.matchAll(/(--[a-z-]+):\s*(#[0-9a-fA-F]{3,8})\s*;/g)) {
+    const name = match[1];
+    const value = match[2];
+    if (name && value) values.set(name, value.toLowerCase());
+  }
+  return values;
+}
+
 async function main(): Promise<void> {
   const sessionPath = await findSession(process.argv[2]);
   process.stdout.write(`session: ${sessionPath}\n`);
-  process.stdout.write("exporting with pi to resolve the theme...\n\n");
-
-  const piPalette = await readPiPalette(sessionPath);
-  if (piPalette.size === 0) throw new Error("could not read any theme variables from pi's export");
+  process.stdout.write("exporting with pi to resolve the themes...\n\n");
 
   const css = await readFile(STYLE_PATH, "utf8");
-  const cssValues = new Map<string, string>();
-  for (const match of css.matchAll(/(--[a-z-]+):\s*(#[0-9a-fA-F]{3,8})\s*;/g)) {
-    const name = match[1];
-    const value = match[2];
-    if (name && value) cssValues.set(name, value.toLowerCase());
-  }
+  // `:root` is the dark palette (the default), `:root[data-theme="light"]` the
+  // light one. Both copy pi's markdown/syntax colours, so both are checked.
+  const blocks: Array<{ name: string; selector: string; theme?: string }> = [
+    { name: "dark (:root)", selector: ":root" },
+    { name: 'light (:root[data-theme="light"])', selector: ':root\\[data-theme="light"\\]', theme: "light" },
+  ];
 
-  const drift: string[] = [];
-  const missing: string[] = [];
-  for (const piName of MIRRORED) {
-    const expected = piPalette.get(piName);
-    const ourName = cssVarName(piName);
-    const actual = cssValues.get(ourName);
-    if (!expected) {
-      missing.push(`pi did not export --${piName}`);
+  let failed = false;
+  for (const block of blocks) {
+    const piPalette = await readPiPalette(sessionPath, block.theme);
+    if (piPalette.size === 0) throw new Error("could not read any theme variables from pi's export");
+
+    const cssValues = readCssBlock(css, block.selector);
+    const drift: string[] = [];
+    const missing: string[] = [];
+    for (const piName of MIRRORED) {
+      const expected = piPalette.get(piName);
+      const ourName = cssVarName(piName);
+      const actual = cssValues.get(ourName);
+      if (!expected) {
+        missing.push(`pi did not export --${piName}`);
+        continue;
+      }
+      if (actual !== expected) {
+        drift.push(`  ${ourName.padEnd(26)} ours ${actual ?? "(missing)"}   pi ${expected}`);
+      }
+    }
+
+    if (missing.length > 0) {
+      process.stdout.write(`⚠️  ${block.name}: ${missing.length} variable(s) not in pi's export\n`);
+      for (const line of missing) process.stdout.write(`  ${line}\n`);
+    }
+    if (drift.length === 0) {
+      process.stdout.write(`✅ ${block.name}: ${MIRRORED.length} colours match pi\n`);
       continue;
     }
-    if (actual !== expected) {
-      drift.push(`  ${ourName.padEnd(26)} ours ${actual ?? "(missing)"}   pi ${expected}`);
-    }
+    failed = true;
+    process.stdout.write(`❌ ${block.name}: ${drift.length} colour(s) drifted\n\n`);
+    for (const line of drift) process.stdout.write(`${line}\n`);
   }
 
-  if (missing.length > 0) {
-    process.stdout.write(`⚠️  ${missing.length} variable(s) not present in pi's export:\n`);
-    for (const line of missing) process.stdout.write(`  ${line}\n`);
-    process.stdout.write("\n");
+  if (failed) {
+    process.stdout.write("\nupdate the drifted values in src/web/style.css\n");
+    process.exit(1);
   }
-
-  if (drift.length === 0) {
-    process.stdout.write(`✅ ${MIRRORED.length} colours match pi's current theme\n`);
-    return;
-  }
-
-  process.stdout.write(`❌ ${drift.length} colour(s) drifted from pi's theme:\n\n`);
-  for (const line of drift) process.stdout.write(`${line}\n`);
-  process.stdout.write("\nupdate these in src/web/style.css (:root block)\n");
-  process.exit(1);
 }
 
 main().catch((error) => {

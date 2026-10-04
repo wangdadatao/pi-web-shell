@@ -41,7 +41,10 @@ export class ImageStore {
       height: dimensions?.height ?? null,
     });
     this.totalBytes += buffer.length;
-    this.evict();
+    // Keep the entry we just added even if it alone exceeds the budget: the
+    // caller reads it back immediately for the snapshot, and evicting it here
+    // would mean re-hashing and re-measuring it on every single snapshot.
+    this.evict(hash);
     return hash;
   }
 
@@ -54,13 +57,14 @@ export class ImageStore {
   }
 
   /** Drop oldest entries first; insertion order is the eviction order. */
-  private evict(): void {
+  private evict(pin?: string): void {
     const limit = Math.max(this.maxBytes, 1);
     while (this.totalBytes > limit) {
-      const oldest = this.images.keys().next();
-      if (oldest.done) break;
-      const entry = this.images.get(oldest.value);
-      this.images.delete(oldest.value);
+      // Map iteration is insertion-ordered, so this is the oldest first.
+      const oldest = [...this.images.keys()].find((key) => key !== pin);
+      if (oldest === undefined) break;
+      const entry = this.images.get(oldest);
+      this.images.delete(oldest);
       if (entry) this.totalBytes -= entry.bytes;
     }
   }

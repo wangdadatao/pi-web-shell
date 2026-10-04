@@ -5,6 +5,11 @@ export interface Config {
   host: string;
   port: number;
   home: string;
+  /**
+   * pi's agent directory: `PI_CODING_AGENT_DIR` or `~/.pi/agent`. Holds
+   * `settings.json` / `models.json` / `auth.json` / `mcp.json` / `skills/`.
+   */
+  agentDir: string;
   /** Directory this server indexes for sessions. */
   sessionsDir: string;
   /**
@@ -40,10 +45,8 @@ function boolFromEnv(value: string | undefined, fallback: boolean): boolean {
  * `~/.pi/agent/sessions` (under `PI_CODING_AGENT_DIR` when set).
  */
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
-  const defaultSessionsDir = join(
-    env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent"),
-    "sessions",
-  );
+  const agentDirRaw = env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent");
+  const defaultSessionsDir = join(agentDirRaw, "sessions");
   const shellSessionsDir = env.PI_SHELL_SESSIONS_DIR;
   const sessionsDir = resolve(
     shellSessionsDir ?? env.PI_CODING_AGENT_SESSION_DIR ?? defaultSessionsDir,
@@ -63,6 +66,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     host: env.PI_SHELL_HOST ?? "127.0.0.1",
     port: intFromEnv(env.PI_SHELL_PORT, 4711),
     home: homedir(),
+    agentDir: resolve(agentDirRaw),
     sessionsDir,
     sessionDirArg,
     piBin: env.PI_SHELL_PI_BIN ?? "pi",

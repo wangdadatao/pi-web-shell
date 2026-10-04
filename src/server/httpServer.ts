@@ -9,6 +9,10 @@ import type { Config } from "./config.ts";
 import { isHostAllowed } from "./hostCheck.ts";
 import { ImageStore, isImageHash, stripInlineImages } from "./imageStore.ts";
 import { loadLocalImage } from "./localImage.ts";
+import { collectEnvironment } from "./environment.ts";
+import { normalizeCommands } from "./commands.ts";
+import { buildUiResponse } from "./extensionUi.ts";
+import { UsageIndex } from "./usageStats.ts";
 import { normalizeSessionKey } from "./paths.ts";
 import type { SessionIndex } from "./sessionIndex.ts";
 import type { ManagedSession, SessionRegistry } from "./sessionRegistry.ts";
@@ -16,10 +20,12 @@ import type {
   FolderSummary,
   ModelOption,
   ModelsResponse,
+  CommandsResponse,
   PiSessionState,
   SessionStats,
   SessionSummary,
   StreamFrame,
+  ActivityFrame,
 } from "../shared/types.ts";
 
 const WEB_DIR = fileURLToPath(new URL("../web/", import.meta.url));
@@ -46,6 +52,8 @@ export interface ServerDeps {
 export function createApp(deps: ServerDeps): Server {
   const { config, index, registry } = deps;
   const images = new ImageStore();
+  // Machine-wide token totals, cached per session file by mtime + size.
+  const usage = new UsageIndex(config.sessionsDir);
 
   return createServer(async (req, res) => {
     try {
@@ -78,8 +86,16 @@ export function createApp(deps: ServerDeps): Server {
         return handleStream(req, res, url, deps, images);
       }
 
+      if (route === "GET /api/events") {
+        return handleEvents(req, res, deps);
+      }
+
       if (route === "POST /api/prompt") {
         return handlePrompt(req, res, deps);
+      }
+
+      if (route === "POST /api/ui-response") {
+        return handleUiResponse(req, res, deps);
       }
 
       if (route === "POST /api/abort") {
@@ -129,6 +145,21 @@ export function createApp(deps: ServerDeps): Server {
         return handleModels(res, url, deps);
       }
 
+      if (route === "GET /api/commands") {
+        return handleCommands(res, url, deps);
+      }
+
+      // Settings page. Both are read-only: nothing here writes a config file.
+      // Titles come from the session index so usage rows read like the sidebar.
+      if (route === "GET /api/settings/usage") {
+        const titles = new Map((await index.listSessions()).map((s) => [s.path, s.title]));
+        return sendJson(res, 200, await usage.report(titles));
+      }
+
+      if (route === "GET /api/settings/environment") {
+        return sendJson(res, 200, await collectEnvironment(config));
+      }
+
       if (req.method === "GET") {
         return serveStatic(url.pathname, res);
       }
@@ -139,7 +170,6 @@ export function createApp(deps: ServerDeps): Server {
       if (!res.headersSent) sendJson(res, 500, { error: message });
       else res.end();
     }
-    void config;
   });
 }
 
@@ -185,8 +215,17 @@ async function collectSessions(deps: ServerDeps): Promise<{
   );
 
   const all = [...pending, ...sessions];
-  const folders = await index.listFolders(all);
-  return { home: config.home, folders, sessions: all };
+  const running = new Set(
+    registry
+      .list()
+      .filter((managed) => managed.streaming)
+      .map((managed) => managed.path),
+  );
+  const withActivity = all.map((session) =>
+    running.has(session.path) ? { ...session, running: true } : session,
+  );
+  const folders = await index.listFolders(withActivity);
+  return { home: config.home, folders, sessions: withActivity };
 }
 
 async function handleNewSession(
@@ -252,7 +291,7 @@ async function handleRename(req: IncomingMessage, res: ServerResponse, deps: Ser
   try {
     await acquired.rpc.send({ type: "set_session_name", name });
   } finally {
-    deps.registry.release(acquired.path);
+    deps.registry.release(acquired);
   }
   return sendJson(res, 200, { ok: true, name });
 }
@@ -316,29 +355,36 @@ async function handleDeleteFolder(req: IncomingMessage, res: ServerResponse, dep
   const targets = all.sessions.filter((session) => session.cwd === cwd);
   if (targets.length === 0) return sendJson(res, 404, { error: "该目录下没有会话" });
 
-  const results: { path: string; method: string }[] = [];
-  const failed: string[] = [];
-  for (const session of targets) {
-    // Pending sessions have no file: disposing the subprocess is all it takes.
-    if (session.pending) {
-      if (deps.registry.get(session.path)) await deps.registry.dispose(session.path);
-      results.push({ path: session.path, method: "gone" });
-      continue;
-    }
-    const sessionPath = normalizeSessionKey(session.path);
-    const sessionsRoot = normalizeSessionKey(deps.config.sessionsDir);
-    if (!isInside(sessionsRoot, sessionPath) || !sessionPath.endsWith(".jsonl")) {
-      failed.push(session.path);
-      continue;
-    }
-    if (deps.registry.get(sessionPath)) await deps.registry.dispose(sessionPath);
-    const method = await trashOrUnlink(sessionPath);
-    if (method) results.push({ path: sessionPath, method });
-    else failed.push(sessionPath);
-  }
+  // One folder can hold dozens of sessions (62 on the machine this was written
+  // on), and each removal spawns `trash`, so this runs concurrently. The report
+  // shape is unchanged: order is the only thing that differs, and nothing
+  // downstream depends on it.
+  const sessionsRoot = normalizeSessionKey(deps.config.sessionsDir);
+  const outcomes = await Promise.all(
+    targets.map(async (session): Promise<{ path: string; method: string } | { path: string; failed: true }> => {
+      // Pending sessions have no file: disposing the subprocess is all it takes.
+      if (session.pending) {
+        if (deps.registry.get(session.path)) await deps.registry.dispose(session.path);
+        return { path: session.path, method: "gone" };
+      }
+      const sessionPath = normalizeSessionKey(session.path);
+      if (!isInside(sessionsRoot, sessionPath) || !sessionPath.endsWith(".jsonl")) {
+        return { path: session.path, failed: true };
+      }
+      if (deps.registry.get(sessionPath)) await deps.registry.dispose(sessionPath);
+      const method = await trashOrUnlink(sessionPath);
+      return method ? { path: sessionPath, method } : { path: sessionPath, failed: true };
+    }),
+  );
 
+  const failed = outcomes.filter((o) => "failed" in o).map((o) => o.path);
+  const results = outcomes.filter((o): o is { path: string; method: string } => "method" in o);
   if (failed.length > 0) {
-    return sendJson(res, 500, { error: `部分会话删除失败（${failed.length}/${targets.length}）`, deleted: results.length, failed });
+    return sendJson(res, 500, {
+      error: `部分会话删除失败（${failed.length}/${targets.length}）`,
+      deleted: results.length,
+      failed,
+    });
   }
   return sendJson(res, 200, { ok: true, deleted: results.length, results });
 }
@@ -376,6 +422,10 @@ async function handleStream(
   if (gzip) gzip.pipe(res);
 
   const write = (chunk: string): void => {
+    // `finish()` can fire (client hung up) while an async `getState`/`getMessages`
+    // is still in flight; the snapshot that follows must not write to the gzip
+    // stream after it was ended.
+    if (closed) return;
     if (gzip) {
       gzip.write(chunk);
       gzip.flush(zlibConstants.Z_SYNC_FLUSH, () => undefined);
@@ -414,7 +464,7 @@ async function handleStream(
       acquired = null;
       unsubscribers.forEach((off) => off());
       unsubscribers.length = 0;
-      registry.release(managed.path);
+      registry.release(managed);
     }
     end();
   }
@@ -440,7 +490,7 @@ async function handleStream(
   if (clientGone) {
     // The client hung up while we were spawning: hand the ref straight back
     // (finish() could not release it — `acquired` was still null).
-    registry.release(managed.path);
+    registry.release(managed);
     return;
   }
 
@@ -470,7 +520,7 @@ async function handleStream(
     const stats = await getSessionStats(managed.rpc).catch(() => null);
     ready = true;
     // Images are the bulk of a session: send hashes, not base64. See imageStore.ts.
-    send({ type: "snapshot", state, messages: stripInlineImages(messages, images), stats });
+    send({ type: "snapshot", state, messages: stripInlineImages(messages, images), stats, ui: managed.ui });
     for (const frame of buffer) send(frame);
     buffer.length = 0;
   } catch (error) {
@@ -481,6 +531,63 @@ async function handleStream(
 
 function acceptsGzip(req: IncomingMessage): boolean {
   return /(^|,)\s*gzip\s*(,|$)/.test(req.headers["accept-encoding"] ?? "");
+}
+
+/**
+ * Global SSE: session run-state changes, independent of any one transcript.
+ *
+ * `/api/stream` only exists while a session is open in a tab, so it cannot tell
+ * you that a *different* session — one you switched away from — is still
+ * working. This endpoint subscribes to the registry instead and pushes one
+ * tiny `activity` frame whenever any managed session starts or finishes a run.
+ */
+async function handleEvents(
+  req: IncomingMessage,
+  res: ServerResponse,
+  deps: ServerDeps,
+): Promise<void> {
+  const { registry } = deps;
+  const gzip = acceptsGzip(req) ? createGzip() : null;
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream; charset=utf-8",
+    "Cache-Control": "no-cache, no-transform",
+    Connection: "keep-alive",
+    "X-Accel-Buffering": "no",
+    ...(gzip ? { "Content-Encoding": "gzip" } : {}),
+  });
+  if (gzip) gzip.pipe(res);
+
+  const write = (chunk: string): void => {
+    if (gzip) {
+      gzip.write(chunk);
+      gzip.flush(zlibConstants.Z_SYNC_FLUSH, () => undefined);
+    } else {
+      res.write(chunk);
+    }
+  };
+  const send = (frame: ActivityFrame): void => write(`data: ${JSON.stringify(frame)}\n\n`);
+
+  let closed = false;
+  const finish = (): void => {
+    if (closed) return;
+    closed = true;
+    clearInterval(heartbeat);
+    off();
+    if (gzip) gzip.end();
+    else res.end();
+  };
+  res.on("close", finish);
+
+  // Replay current state on connect: a change that lands between the client's
+  // `/api/sessions` fetch and this subscription would otherwise be lost.
+  for (const managed of registry.list()) {
+    if (managed.streaming) send({ type: "activity", path: managed.path, running: true });
+  }
+
+  const off = registry.onActivity((path, running) => {
+    if (!closed) send({ type: "activity", path, running });
+  });
+  const heartbeat = setInterval(() => write(": ping\n\n"), SSE_HEARTBEAT_MS);
 }
 
 async function handlePrompt(req: IncomingMessage, res: ServerResponse, deps: ServerDeps): Promise<void> {
@@ -502,6 +609,24 @@ async function handlePrompt(req: IncomingMessage, res: ServerResponse, deps: Ser
 
   const data = await managed.rpc.send(command);
   return sendJson(res, 200, { ok: true, data });
+}
+
+/**
+ * Answer one blocking extension dialog.
+ *
+ * The id comes from a request the browser received on this session's stream;
+ * an id that no longer matches a pending dialog is ignored by pi, so a late
+ * answer is harmless.
+ */
+async function handleUiResponse(req: IncomingMessage, res: ServerResponse, deps: ServerDeps): Promise<void> {
+  const body = await readJson(req);
+  const managed = deps.registry.get(String(body["path"] ?? ""));
+  if (!managed) return sendJson(res, 404, { error: "session not open" });
+
+  const result = buildUiResponse(body);
+  if (!result.ok) return sendJson(res, 400, { error: result.error });
+  managed.rpc.respond(result.record);
+  return sendJson(res, 200, { ok: true });
 }
 
 /** Content-addressed image bytes, cached forever by the browser. */
@@ -584,6 +709,21 @@ async function handleModels(res: ServerResponse, url: URL, deps: ServerDeps): Pr
   return sendJson(res, 200, payload);
 }
 
+/**
+ * Slash commands for an open session, for the composer's command menu.
+ *
+ * Needs the session's pi subprocess, so it only answers while a stream is open
+ * (the client calls it right after the snapshot).
+ */
+async function handleCommands(res: ServerResponse, url: URL, deps: ServerDeps): Promise<void> {
+  const managed = deps.registry.get(resolve(url.searchParams.get("path") ?? ""));
+  if (!managed) return sendJson(res, 404, { error: "session not open" });
+
+  const data = await managed.rpc.send<{ commands?: unknown }>({ type: "get_commands" });
+  const payload: CommandsResponse = { commands: normalizeCommands(data?.commands) };
+  return sendJson(res, 200, payload);
+}
+
 function normalizeState(raw: Record<string, unknown>): PiSessionState {
   const model = raw["model"] as { provider?: string; id?: string; name?: string } | undefined;
   return {
@@ -644,7 +784,12 @@ function flushError(
 
 function sendJson(res: ServerResponse, status: number, payload: unknown): void {
   const body = JSON.stringify(payload);
-  res.writeHead(status, { "Content-Type": "application/json; charset=utf-8" });
+  // No, not even the session list: the whole point of this app is that a
+  // running server and a browser tab never disagree about the current state.
+  res.writeHead(status, {
+    "Content-Type": "application/json; charset=utf-8",
+    "Cache-Control": "no-store, must-revalidate",
+  });
   res.end(body);
 }
 
@@ -661,7 +806,11 @@ async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> 
 }
 
 async function serveStatic(pathname: string, res: ServerResponse): Promise<void> {
-  const relative = pathname === "/" ? "index.html" : pathname.replace(/^\/+/, "");
+  // App routes deep-linked or refreshed resolve to the shell. Only the known
+  // route gets the fallback — everything else keeps 404ing, so a mistyped
+  // asset path stays visible instead of silently loading the app.
+  const clean = pathname.replace(/\/+$/, "") || "/";
+  const relative = clean === "/" || clean === "/settings" ? "index.html" : clean.replace(/^\/+/, "");
   const target = resolve(WEB_DIR, relative);
   if (!isInside(WEB_DIR, target)) return sendJson(res, 403, { error: "forbidden" });
 

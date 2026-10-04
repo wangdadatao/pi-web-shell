@@ -2,6 +2,7 @@
 
 import { marked } from "./vendor/marked.esm.js";
 import DOMPurify from "./vendor/purify.es.mjs";
+import { LOCALES, getLocale, setLocale, t } from "./i18n.js";
 
 marked.setOptions({ gfm: true, breaks: true });
 
@@ -19,7 +20,7 @@ DOMPurify.addHook("afterSanitizeAttributes", (node) => {
 const api = {
   async sessions() {
     const res = await fetch("/api/sessions");
-    if (!res.ok) throw new Error(`加载会话失败: ${res.status}`);
+    if (!res.ok) throw new Error(t("api.sessionsFailed", { status: res.status }));
     return res.json();
   },
   async prompt(path, message, images) {
@@ -29,19 +30,44 @@ const api = {
       body: JSON.stringify({ path, message, images }),
     });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || `发送失败: ${res.status}`);
+    if (!res.ok) throw new Error(data.error || t("api.promptFailed", { status: res.status }));
     return data;
   },
   async abort(path) {
-    await fetch("/api/abort", {
+    const res = await fetch("/api/abort", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ path }),
     });
+    const data = await res.json().catch(() => ({}));
+    // Ignoring this made a failed stop look like a successful one: the button
+    // stayed greyed out while the run kept going.
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    return data;
+  },
+  /**
+   * Answer one blocking extension dialog. Best-effort by design: the request
+   * may already be gone (a timeout on pi's side, or a replaced subprocess), and
+   * a dead session shows up on the stream rather than here.
+   */
+  async uiResponse(path, payload) {
+    const res = await fetch("/api/ui-response", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path, ...payload }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    return data;
   },
   async models(path) {
     const res = await fetch(`/api/models?path=${encodeURIComponent(path)}`);
-    if (!res.ok) throw new Error(`加载模型列表失败: ${res.status}`);
+    if (!res.ok) throw new Error(t("api.modelsFailed", { status: res.status }));
+    return res.json();
+  },
+  async commands(path) {
+    const res = await fetch(`/api/commands?path=${encodeURIComponent(path)}`);
+    if (!res.ok) throw new Error(t("api.commandsFailed", { status: res.status }));
     return res.json();
   },
   async setModel(path, provider, modelId) {
@@ -51,7 +77,7 @@ const api = {
       body: JSON.stringify({ path, provider, modelId }),
     });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || `切换模型失败: ${res.status}`);
+    if (!res.ok) throw new Error(data.error || t("api.setModelFailed", { status: res.status }));
     return data;
   },
   async setThinking(path, level) {
@@ -61,8 +87,24 @@ const api = {
       body: JSON.stringify({ path, level }),
     });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || `设置思考等级失败: ${res.status}`);
+    if (!res.ok) throw new Error(data.error || t("api.setThinkingFailed", { status: res.status }));
     return data;
+  },
+  /** Settings page: cross-session token totals (read-only). */
+  async settingsUsage() {
+    const res = await fetch("/api/settings/usage");
+    // A 404 here almost always means the server process is older than this
+    // page — the frontend is served from disk, so a reload shows new UI first.
+    if (res.status === 404) throw new Error(t("api.serverOutdated"));
+    if (!res.ok) throw new Error(t("api.usageFailed", { status: res.status }));
+    return res.json();
+  },
+  /** Settings page: what pi will load (read-only). */
+  async settingsEnvironment() {
+    const res = await fetch("/api/settings/environment");
+    if (res.status === 404) throw new Error(t("api.serverOutdated"));
+    if (!res.ok) throw new Error(t("api.environmentFailed", { status: res.status }));
+    return res.json();
   },
   async newSession(cwd) {
     const res = await fetch("/api/sessions/new", {
@@ -71,7 +113,7 @@ const api = {
       body: JSON.stringify({ cwd }),
     });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || `新建会话失败: ${res.status}`);
+    if (!res.ok) throw new Error(data.error || t("api.newSessionFailed", { status: res.status }));
     return data;
   },
   async rename(path, name) {
@@ -81,7 +123,7 @@ const api = {
       body: JSON.stringify({ path, name }),
     });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || `重命名失败: ${res.status}`);
+    if (!res.ok) throw new Error(data.error || t("api.renameFailed", { status: res.status }));
     return data;
   },
   async deleteSession(path) {
@@ -91,7 +133,7 @@ const api = {
       body: JSON.stringify({ path }),
     });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || `删除失败: ${res.status}`);
+    if (!res.ok) throw new Error(data.error || t("api.deleteFailed", { status: res.status }));
     return data;
   },
   async deleteFolderSessions(cwd) {
@@ -101,7 +143,7 @@ const api = {
       body: JSON.stringify({ cwd }),
     });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || `删除失败: ${res.status}`);
+    if (!res.ok) throw new Error(data.error || t("api.deleteFailed", { status: res.status }));
     return data;
   },
 };
@@ -130,6 +172,22 @@ const el = {
   thinkingSelect: document.getElementById("thinking-select"),
   dropHint: document.getElementById("drop-hint"),
   sidebarToggle: document.getElementById("sidebar-toggle"),
+  app: document.getElementById("app"),
+  settings: document.getElementById("settings"),
+  settingsBack: document.getElementById("settings-back"),
+  settingsMenu: document.getElementById("settings-menu"),
+  settingsBody: document.getElementById("settings-body"),
+  heatTip: document.getElementById("heat-tip"),
+  extStatus: document.getElementById("ext-status"),
+  extWidgetAbove: document.getElementById("ext-widget-above"),
+  extWidgetBelow: document.getElementById("ext-widget-below"),
+  toasts: document.getElementById("ui-toasts"),
+  dialog: document.getElementById("ui-dialog"),
+  dialogTitle: document.getElementById("ui-dialog-title"),
+  dialogBody: document.getElementById("ui-dialog-body"),
+  dialogActions: document.getElementById("ui-dialog-actions"),
+  commandMenu: document.getElementById("command-menu"),
+  commandList: document.getElementById("command-list"),
 };
 
 const state = {
@@ -139,6 +197,10 @@ const state = {
   cwd: null,
   path: null,
   stream: null,
+  /** Consecutive reconnect attempts for the current session stream. */
+  streamRetries: 0,
+  /** True once the stream is finished for good; stops the reconnect timer. */
+  streamEnded: false,
   streaming: false,
   attachments: [],
   live: null,
@@ -149,12 +211,51 @@ const state = {
   thinkingLevels: [],
   modelLabel: null,
   thinkingLevel: null,
+  /** "chat" or "settings" — which top-level view owns the window. */
+  view: "chat",
+  /** Theme preference: "system" | "dark" | "light" (see initPreferences). */
+  theme: "system",
+  settingsSection: "usage",
+  /** Model filter on the token tab: "" means every model. */
+  usageModel: "",
+  /** Lazily fetched, read-only payloads for the settings page. */
+  settingsData: { usage: null, environment: null },
+  /** Payload being fetched right now, so we never ask twice. */
+  pendingKey: null,
+  /** Payload that failed, so we do not retry in a loop. */
+  failedKey: null,
+  settingsError: null,
+  // The speed readout is scoped to one assistant message: the clock starts at its
+  // first delta and both counters are reset on every message_start.
   streamStart: 0,
   streamReportedTokens: 0,
   streamEstimatedTokens: 0,
   statsTimer: null,
   lastSpeed: null,
   loadTimer: null,
+  /** Title from index.html, restored when an extension clears its own. */
+  defaultTitle: "pi-web-shell",
+  /**
+   * Extension UI state (`setStatus` / `setWidget` / `setTitle`). Keyed maps, not
+   * a single value: several extensions can own distinct keys, and a session
+   * switch resets the whole set.
+   */
+  extension: {
+    status: new Map(),
+    widgets: { aboveEditor: new Map(), belowEditor: new Map() },
+    title: null,
+  },
+  /** Dialog currently on screen: `{ path, request }`, or null. */
+  dialog: null,
+  /** Dialogs waiting behind the open one, in arrival order. */
+  dialogQueue: [],
+  /** Auto-close timer for a dialog that came with a `timeout`. */
+  dialogTimer: null,
+  /** Slash commands for the open session, and the menu's current filter. */
+  commands: [],
+  commandMatches: [],
+  commandIndex: 0,
+  commandQuery: null,
 };
 
 // ---------------------------------------------------------------- rendering
@@ -194,7 +295,7 @@ marked.use({
       return (
         `<div class="${className}">` +
         `<div class="code-head">${label}` +
-        `<button class="copy-btn" type="button" data-copy="code" aria-label="复制代码">复制</button></div>` +
+        `<button class="copy-btn" type="button" data-copy="code" aria-label="${t("common.copyCode")}">${t("common.copy")}</button></div>` +
         `<pre class="language-${esc(language)}"><code class="language-${esc(language)}">${body ?? esc(code)}</code></pre>` +
         `</div>`
       );
@@ -224,8 +325,8 @@ function renderMermaidBlock(source) {
   return (
     `<div class="mermaid-block">` +
     `<div class="code-head"><span class="code-lang">mermaid</span>` +
-    `<button class="copy-btn" type="button" data-copy="diagram" aria-label="复制图表源码">复制</button></div>` +
-    `<div class="mermaid-body"><span class="mermaid-pending">渲染图表中…</span></div>` +
+    `<button class="copy-btn" type="button" data-copy="diagram" aria-label="${t("common.copyDiagram")}">${t("common.copy")}</button></div>` +
+    `<div class="mermaid-body"><span class="mermaid-pending">${t("mermaid.rendering")}</span></div>` +
     `<pre class="mermaid-source" hidden><code>${esc(source)}</code></pre>` +
     `</div>`
   );
@@ -300,7 +401,7 @@ async function renderMermaidDiagrams(targets) {
     const source = mermaidSource(node);
     node.dataset.mermaidState = "rendering";
     if (!api) {
-      failMermaid(node, "mermaid 未加载");
+      failMermaid(node, t("mermaid.notLoaded"));
       continue;
     }
     const id = `pi-mermaid-${(mermaidSerial += 1)}`;
@@ -323,7 +424,7 @@ function failMermaid(node, message) {
   const note = document.createElement("div");
   note.className = "mermaid-error";
   const first = String(message).split("\n")[0].slice(0, 200);
-  note.textContent = `图表渲染失败：${first}`;
+  note.textContent = t("mermaid.failed", { message: first });
   node.replaceChildren(note);
   const source = node.closest(".mermaid-block")?.querySelector(".mermaid-source");
   if (source) source.hidden = false;
@@ -385,7 +486,7 @@ function renderBlock(block) {
 }
 
 function renderThinking(text, open) {
-  return `<details class="thinking-block"${open ? " open" : ""}><summary>思考</summary><div class="thinking-body">${esc(text)}</div></details>`;
+  return `<details class="thinking-block"${open ? " open" : ""}><summary>${t("msg.thinking")}</summary><div class="thinking-body">${esc(text)}</div></details>`;
 }
 
 function renderImage(block) {
@@ -395,7 +496,7 @@ function renderImage(block) {
   // while images stream in.
   const size =
     block.width && block.height ? ` width="${Number(block.width)}" height="${Number(block.height)}"` : "";
-  return `<img src="${esc(src)}" alt="图片" loading="lazy" decoding="async"${size} />`;
+  return `<img src="${esc(src)}" alt="${t("msg.image")}" loading="lazy" decoding="async"${size} />`;
 }
 
 function imageSrc(block) {
@@ -420,7 +521,7 @@ function renderToolImage(block) {
   const label = `🖼 [${block.mimeType || "image"}${dimensions}]`;
   return (
     `<button class="image-placeholder" type="button" data-image="${esc(src)}" ` +
-    `title="点击加载图片">${esc(label)}${esc(bytes)}</button>`
+    `title="${t("msg.clickToLoad")}">${esc(label)}${esc(bytes)}</button>`
   );
 }
 
@@ -471,7 +572,9 @@ function renderToolChip(name, args, isError, open, resultContent) {
   const body =
     (argsText ? `<pre class="tool-args">${esc(argsText)}</pre>` : "") +
     renderToolResultContent(resultContent);
-  const label = isError ? `🔧 ${esc(name)} · 出错` : `🔧 ${esc(name)}`;
+  const label = isError
+    ? t("msg.toolFailed", { name: esc(name) })
+    : t("msg.toolTool", { name: esc(name) });
   return `<details class="tool-chip${isError ? " error" : ""}"${open ? " open" : ""}><summary class="tool-name">${label}</summary>${body}</details>`;
 }
 
@@ -479,7 +582,7 @@ function messageNode(role, content) {
   const node = document.createElement("div");
   node.className = `msg ${role}`;
   if (role === "user") {
-    node.innerHTML = `<div class="role-tag">你</div>${renderContent(content)}`;
+    node.innerHTML = `<div class="role-tag">${t("msg.you")}</div>${renderContent(content)}`;
   } else if (role === "assistant") {
     node.innerHTML = `${assistantHead()}${renderContent(content)}`;
   } else {
@@ -491,7 +594,7 @@ function messageNode(role, content) {
 function assistantHead() {
   return (
     `<div class="msg-head"><span class="role-tag">pi</span>` +
-    `<button class="copy-btn" type="button" data-copy="message" aria-label="复制这条回复">复制</button></div>`
+    `<button class="copy-btn" type="button" data-copy="message" aria-label="${t("common.copyMessage")}">${t("common.copy")}</button></div>`
   );
 }
 
@@ -564,8 +667,8 @@ function updateToolGroupSummary(group) {
   const parts = [...counts.entries()].map(([name, count]) => (count > 1 ? `${name} ×${count}` : name));
 
   const head = [];
-  if (group.hasThinking) head.push("思考");
-  if (group.names.length > 0) head.push(`${group.names.length} 次工具调用`);
+  if (group.hasThinking) head.push(t("group.thinking"));
+  if (group.names.length > 0) head.push(t("group.toolCalls", { count: group.names.length }));
 
   const shown = parts.slice(0, 6).join("、");
   const detail = parts.length > 0 ? `${shown}${parts.length > 6 ? " …" : ""}` : "";
@@ -608,7 +711,7 @@ function splitAssistant(content) {
 
 function renderToolResult(msg) {
   const name = esc(msg.toolName || "tool");
-  return `<details class="tool-result"><summary>🔧 ${name} 结果${msg.isError ? " · 出错" : ""}</summary>${renderToolResultContent(msg.content)}</details>`;
+  return `<details class="tool-result"><summary>${t("msg.toolResult", { name })}${msg.isError ? t("msg.errorSuffix") : ""}</summary>${renderToolResultContent(msg.content)}</details>`;
 }
 
 /** Render a stored transcript, grouping consecutive tool activity. */
@@ -706,12 +809,12 @@ function splitHome(cwd) {
 function relativeTime(iso) {
   const diff = Date.now() - new Date(iso).getTime();
   const minutes = Math.round(diff / 60000);
-  if (minutes < 1) return "刚刚";
-  if (minutes < 60) return `${minutes} 分钟前`;
+  if (minutes < 1) return t("time.justNow");
+  if (minutes < 60) return t("time.minutes", { count: minutes });
   const hours = Math.round(minutes / 60);
-  if (hours < 24) return `${hours} 小时前`;
+  if (hours < 24) return t("time.hours", { count: hours });
   const days = Math.round(hours / 24);
-  if (days < 30) return `${days} 天前`;
+  if (days < 30) return t("time.days", { count: days });
   return new Date(iso).toLocaleDateString();
 }
 
@@ -724,9 +827,9 @@ const SIDEBAR_LAST_KEY = "piShellSidebarLast";
 const SIDEBAR_STATES = ["full", "no-folders", "fullscreen"];
 
 const SIDEBAR_NEXT_ACTION = {
-  full: "收起文件夹栏",
-  "no-folders": "收起侧栏",
-  fullscreen: "展开侧栏",
+  full: "sidebar.collapseFolders",
+  "no-folders": "sidebar.collapseAll",
+  fullscreen: "sidebar.expand",
 };
 
 let sidebarState = "full";
@@ -751,7 +854,7 @@ function applySidebar(state) {
   sidebarState = state;
   document.getElementById("app").dataset.sidebar = state;
   el.sidebarToggle.textContent = state === "fullscreen" ? "»" : "‹";
-  el.sidebarToggle.title = `${SIDEBAR_NEXT_ACTION[state]}（⌘B）`;
+  el.sidebarToggle.title = t(SIDEBAR_NEXT_ACTION[state]);
   placeSidebarToggle();
 }
 
@@ -789,6 +892,8 @@ function initSidebar() {
   // intermediate stage, so the shortcut can't surprise you.
   window.addEventListener("keydown", (event) => {
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "b") {
+      // In the settings view there is no sidebar on screen to collapse.
+      if (state.view === "settings") return;
       event.preventDefault();
       setSidebar(sidebarState === "fullscreen" ? sidebarLastExpanded : "fullscreen");
     }
@@ -798,16 +903,23 @@ function initSidebar() {
 function renderFolders() {
   el.folderList.innerHTML = "";
   if (state.folders.length === 0) {
-    el.folderList.innerHTML = `<div class="empty">还没有任何会话</div>`;
+    el.folderList.innerHTML = `<div class="empty">${t("sidebar.noSessions")}</div>`;
     return;
   }
   for (const folder of state.folders) {
+    const runningCount = state.sessions.filter((s) => s.cwd === folder.cwd && s.running).length;
     const node = document.createElement("div");
-    node.className = `item folder${folder.cwd === state.cwd ? " active" : ""}`;
-    node.innerHTML = `<div class="name" title="${esc(folder.cwd)}">${esc(shortPath(folder.cwd))}</div>
-      <div class="sub">${folder.sessionCount} 个会话 · ${relativeTime(folder.lastActivity)}</div>
+    node.className = `item folder${folder.cwd === state.cwd ? " active" : ""}${runningCount ? " running" : ""}`;
+    const dot = runningCount
+      ? `<span class="run-dot" title="${t("sidebar.folderRunning", { count: runningCount })}"></span>`
+      : "";
+    const active = runningCount
+      ? `<span class="running-text">${t("sidebar.folderRunningSuffix", { count: runningCount })}</span>`
+      : "";
+    node.innerHTML = `<div class="name" title="${esc(folder.cwd)}">${dot}${esc(shortPath(folder.cwd))}</div>
+      <div class="sub">${t("sidebar.folderSub", { count: folder.sessionCount, time: relativeTime(folder.lastActivity) })}${active}</div>
       <div class="item-actions">
-        <button class="icon-btn folder-act" data-act="delete" title="删除该目录下的所有会话（不碰目录本身）">🗑</button>
+        <button class="icon-btn folder-act" data-act="delete" title="${t("sidebar.deleteFolder")}">🗑</button>
       </div>`;
     node.onclick = () => selectFolder(folder.cwd);
     node.querySelector(".item-actions").onclick = (event) => {
@@ -820,26 +932,31 @@ function renderFolders() {
 
 function renderSessions() {
   const list = state.sessions.filter((s) => s.cwd === state.cwd);
-  el.sessionsTitle.textContent = state.cwd ? shortPath(state.cwd) : "会话";
+  el.sessionsTitle.textContent = state.cwd ? shortPath(state.cwd) : t("sidebar.sessions");
   el.sessionList.innerHTML = "";
   if (!state.cwd) {
-    el.sessionList.innerHTML = `<div class="empty">选择左侧文件夹</div>`;
+    el.sessionList.innerHTML = `<div class="empty">${t("sidebar.pickFolder")}</div>`;
     return;
   }
   if (list.length === 0) {
-    el.sessionList.innerHTML = `<div class="empty">该文件夹下没有会话</div>`;
+    el.sessionList.innerHTML = `<div class="empty">${t("sidebar.noSessionsInFolder")}</div>`;
     return;
   }
   for (const session of list) {
     const node = document.createElement("div");
-    node.className = `item session${session.path === state.path ? " active" : ""}${session.pending ? " pending" : ""}`;
-    const badge = session.pending ? `<span class="badge">新</span>` : "";
-    const sub = session.pending ? "尚未发送第一条消息" : relativeTime(session.updatedAt);
-    node.innerHTML = `<div class="name" title="${esc(session.title)}">${esc(session.title)}${badge}</div>
-      <div class="sub">${esc(sub)}</div>
+    node.className = `item session${session.path === state.path ? " active" : ""}${session.pending ? " pending" : ""}${session.running ? " running" : ""}`;
+    const badge = session.pending ? `<span class="badge">${t("session.badgeNew")}</span>` : "";
+    const dot = session.running ? `<span class="run-dot" title="${t("session.running")}"></span>` : "";
+    const sub = session.pending
+      ? t("session.pending")
+      : session.running
+        ? `<span class="running-text">${t("session.runningNow")}</span> · ${relativeTime(session.updatedAt)}`
+        : relativeTime(session.updatedAt);
+    node.innerHTML = `<div class="name" title="${esc(session.title)}">${dot}${esc(session.title)}${badge}</div>
+      <div class="sub">${sub}</div>
       <div class="item-actions">
-        <button class="icon-btn session-act" data-act="rename" title="重命名">✎</button>
-        <button class="icon-btn session-act" data-act="delete" title="删除会话">🗑</button>
+        <button class="icon-btn session-act" data-act="rename" title="${t("session.rename")}">✎</button>
+        <button class="icon-btn session-act" data-act="delete" title="${t("session.delete")}">🗑</button>
       </div>`;
     node.onclick = () => openSession(session);
     node.querySelector(".item-actions").onclick = (event) => {
@@ -861,6 +978,8 @@ async function selectFolder(cwd) {
 // ---------------------------------------------------------------- session
 
 function closeStream() {
+  // Also stops the reconnect timer: it checks this flag before re-attaching.
+  state.streamEnded = true;
   if (state.stream) {
     state.stream.close();
     state.stream = null;
@@ -873,19 +992,26 @@ function closeStream() {
   state.toolGroup = null;
   state.toolEntryIndex = new Map();
   state.stats = null;
-  state.streamStart = 0;
-  state.streamReportedTokens = 0;
-  state.streamEstimatedTokens = 0;
+  resetSpeed();
   state.lastSpeed = null;
   resetModelControls();
   renderStats();
   setStatus("idle");
+  // Extension state and dialogs belong to the session we just left: clear the
+  // state and answer any open dialog as cancelled, or that pi subprocess would
+  // block forever waiting for a host that moved on.
+  resetExtensionUi();
+  state.commands = [];
+  hideCommandMenu();
 }
 
 function setStatus(kind) {
   el.status.className = `status ${kind}`;
   el.abort.disabled = kind !== "live";
 }
+
+/** How many times a dropped stream is re-attached before giving up. */
+const STREAM_MAX_RETRIES = 3;
 
 async function openSession(session) {
   closeStream();
@@ -906,8 +1032,25 @@ async function openSession(session) {
     if (state.path === sessionPath) el.messages.innerHTML = skeletonHtml();
   }, 250);
 
+  openSessionStream(session);
+}
+
+/**
+ * Attach (or re-attach) the SSE stream of the session that is already selected.
+ *
+ * `EventSource` retries by itself, forever, and every reconnect makes the server
+ * acquire the session again — which spawns a pi subprocess. So the retries are
+ * taken over here: a few with backoff, enough to ride out a service restart,
+ * then stop and say so instead of looping invisibly in the background.
+ */
+function openSessionStream(session) {
   const stream = new EventSource(`/api/stream?path=${encodeURIComponent(session.path)}`);
   state.stream = stream;
+  state.streamEnded = false;
+
+  stream.onopen = () => {
+    state.streamRetries = 0;
+  };
 
   stream.onmessage = (event) => {
     let frame;
@@ -924,23 +1067,64 @@ async function openSession(session) {
       return;
     }
     if (frame.type === "error") {
-      addNotice(`错误：${frame.error}`, "error");
+      // pi exited, or the server could not keep the stream up. Tell the user,
+      // then treat it like any other drop: one reconnect may well succeed (a
+      // service restart looks exactly like this), and if it does not we stop.
+      addNotice(t("common.error", { message: frame.error }), "error");
       setStatus("idle");
+      retryOrGiveUp(session, stream);
     }
   };
 
-  stream.onerror = () => {
-    addNotice("连接已断开（pi 进程可能已退出）", "error");
-    setStatus("idle");
-  };
+  stream.onerror = () => retryOrGiveUp(session, stream);
 }
+
+/**
+ * The stream is over: reconnect a few times, then stop for good.
+ *
+ * Never retry forever. `EventSource` does that by default, and each reconnect
+ * makes the server acquire the session again — spawning a pi subprocess nobody
+ * is watching. Three attempts with backoff ride out a service restart (which
+ * closes streams this way) while keeping a dead session from looping.
+ *
+ * `state.stream` is deliberately left pointing at the failed stream until the
+ * retry replaces it: that is how a late retry notices that the user has since
+ * switched sessions (`closeStream()` clears both the pointer and the flag).
+ */
+function retryOrGiveUp(session, stream) {
+  if (state.stream !== stream || state.streamEnded) return;
+  if (state.streamRetries >= STREAM_MAX_RETRIES) {
+    endStream(stream);
+    addNotice(t("msg.disconnected"), "error");
+    setStatus("idle");
+    return;
+  }
+  state.streamRetries += 1;
+  stream.close();
+  setTimeout(
+    () => {
+      if (state.path === session.path && state.stream === stream && !state.streamEnded) {
+        openSessionStream(session);
+      }
+    },
+    500 * 2 ** (state.streamRetries - 1),
+  );
+}
+
+/** Stop retrying for good. `closeStream`/`openSession` own the flag. */
+function endStream(stream) {
+  state.streamEnded = true;
+  stream.close();
+  if (state.stream === stream) state.stream = null;
+}
+
 
 function handleSnapshot(frame) {
   clearTimeout(state.loadTimer);
   state.loadTimer = null;
   el.messages.innerHTML = "";
   const messages = frame.messages || [];
-  if (messages.length === 0) addNotice("(空会话，开始对话吧)");
+  if (messages.length === 0) addNotice(t("msg.emptySession"));
   renderHistory(messages);
 
   const model = frame.state && frame.state.model;
@@ -950,6 +1134,12 @@ function handleSnapshot(frame) {
   setStatus(frame.state && frame.state.isStreaming ? "live" : "idle");
   state.stats = frame.stats ?? null;
   renderStats();
+  // Fire-and-forget extension state is replayed here because a widget set at
+  // `session_start` may have fired long before this stream attached.
+  applyExtensionUiSnapshot(frame.ui);
+  // Commands come from the session's pi subprocess, so they can only be fetched
+  // now that the stream (and therefore the child) exists.
+  void loadCommands();
   loadModelControls();
   scrollToEnd();
 }
@@ -958,22 +1148,33 @@ function handleEvent(event) {
   switch (event.type) {
     case "agent_start":
       state.streaming = true;
-      state.streamStart = performance.now();
-      state.streamReportedTokens = 0;
-      state.streamEstimatedTokens = 0;
+      // Wait for the first delta before starting the clock: request latency is not
+      // decode time, so it must not dilute the rate.
+      resetSpeed();
       state.lastSpeed = null;
       startStatsTicker();
       setStatus("live");
       break;
     case "message_start":
       // Build the assistant bubble lazily: a tool-only turn must not create one.
-      if (event.message && event.message.role === "assistant") state.live = null;
+      if (event.message && event.message.role === "assistant") {
+        state.live = null;
+        resetSpeed();
+      }
       break;
     case "message_update":
       applyDelta(event);
       break;
     case "message_end":
-      if (event.message && event.message.role === "assistant") finalizeAssistant(event.message);
+      if (event.message && event.message.role === "assistant") {
+        // The final message carries authoritative usage even when no stream event
+        // did, so prefer it before freezing the rate for this message.
+        const out = event.message.usage?.output;
+        if (typeof out === "number" && out > 0) state.streamReportedTokens = out;
+        state.lastSpeed = currentSpeed() ?? state.lastSpeed;
+        resetSpeed();
+        finalizeAssistant(event.message);
+      }
       break;
     case "tool_execution_start": {
       const entry = addToolEntry(renderToolChip(event.toolName, event.args, false, true), event.toolName);
@@ -984,6 +1185,9 @@ function handleEvent(event) {
     }
     case "tool_execution_end":
       finishToolEntry(event);
+      break;
+    case "extension_ui_request":
+      handleExtensionUiRequest(event);
       break;
     case "session_info_changed":
       if (event.name) {
@@ -1002,8 +1206,10 @@ function handleEvent(event) {
       break;
     case "agent_settled":
       closeToolGroup();
-      // Keep the final rate on screen until the next run starts.
-      state.lastSpeed = currentSpeed();
+      // Keep the last rate on screen until the next run starts. A message cut short
+      // by an abort still has a live clock, so it wins; otherwise message_end has
+      // already frozen the right value and tool time stays out of the ratio.
+      state.lastSpeed = currentSpeed() ?? state.lastSpeed;
       state.streaming = false;
       state.live = null;
       stopStatsTicker();
@@ -1014,6 +1220,315 @@ function handleEvent(event) {
     default:
       break;
   }
+}
+
+// ------------------------------------------------------ extension UI (RPC)
+//
+// pi's `extension_ui_request` subprotocol, so extensions that talk to a host
+// work here too: dialogs (`select` / `confirm` / `input` / `editor`) are
+// answered through POST /api/ui-response, and the fire-and-forget methods are
+// mirrored (notify → toast, setStatus → chip, setWidget → block, setTitle →
+// document.title, set_editor_text → composer).
+//
+// The full vocabulary is documented in pi's docs/rpc-extension-ui.md. Methods a
+// terminal needs but a browser cannot provide (`custom`, `onTerminalInput`,
+// themes) are not part of RPC mode; extensions are expected to fall back to
+// dialogs there, so nothing is lost by not faking them.
+
+/** Strip SGR colour codes: extensions colour widget/status text for a terminal. */
+const ANSI_PATTERN = /\u001b\[[0-9;]*[A-Za-z]/g;
+
+function stripAnsi(text) {
+  return typeof text === "string" ? text.replace(ANSI_PATTERN, "") : "";
+}
+
+function handleExtensionUiRequest(event) {
+  switch (event.method) {
+    case "notify":
+      showToast(event.message, event.notifyType);
+      break;
+    case "setStatus":
+      setExtensionStatus(event.statusKey, event.statusText);
+      break;
+    case "setWidget":
+      setExtensionWidget(event.widgetKey, event.widgetLines, event.widgetPlacement);
+      break;
+    case "setTitle":
+      setExtensionTitle(event.title);
+      break;
+    case "set_editor_text":
+      applyEditorText(event.text);
+      break;
+    case "select":
+    case "confirm":
+    case "input":
+    case "editor":
+      enqueueDialog(event);
+      break;
+    default:
+      break;
+  }
+}
+
+/** Rebuild the whole extension surface from a snapshot (session attach/switch). */
+function applyExtensionUiSnapshot(ui) {
+  state.extension.status = new Map();
+  state.extension.widgets = { aboveEditor: new Map(), belowEditor: new Map() };
+  state.extension.title = null;
+
+  if (ui) {
+    for (const entry of ui.status || []) {
+      if (entry && typeof entry.key === "string") state.extension.status.set(entry.key, String(entry.text ?? ""));
+    }
+    for (const widget of ui.widgets || []) {
+      if (!widget || typeof widget.key !== "string") continue;
+      const bucket = widget.placement === "belowEditor" ? state.extension.widgets.belowEditor : state.extension.widgets.aboveEditor;
+      bucket.set(widget.key, (widget.lines || []).map(String));
+    }
+    if (ui.title) state.extension.title = String(ui.title);
+  }
+  renderExtensionUi();
+}
+
+function setExtensionStatus(key, text) {
+  if (typeof key !== "string" || !key) return;
+  const value = typeof text === "string" && text !== "" ? stripAnsi(text) : null;
+  if (value === null) state.extension.status.delete(key);
+  else state.extension.status.set(key, value);
+  renderExtensionUi();
+}
+
+function setExtensionWidget(key, lines, placement) {
+  if (typeof key !== "string" || !key) return;
+  const bucket = placement === "belowEditor" ? state.extension.widgets.belowEditor : state.extension.widgets.aboveEditor;
+  if (Array.isArray(lines)) bucket.set(key, lines.map((line) => stripAnsi(String(line))));
+  else bucket.delete(key);
+  renderExtensionUi();
+}
+
+function setExtensionTitle(title) {
+  state.extension.title = typeof title === "string" && title !== "" ? title : null;
+  renderExtensionUi();
+}
+
+function applyEditorText(text) {
+  el.input.value = typeof text === "string" ? text : "";
+  autoGrow();
+  if (el.input.value) el.input.focus();
+}
+
+function renderExtensionUi() {
+  el.extStatus.innerHTML = "";
+  for (const text of state.extension.status.values()) {
+    const chip = document.createElement("span");
+    chip.className = "ext-status-chip";
+    chip.textContent = text;
+    el.extStatus.appendChild(chip);
+  }
+  el.extStatus.hidden = state.extension.status.size === 0;
+
+  renderWidgetBucket(el.extWidgetAbove, state.extension.widgets.aboveEditor);
+  renderWidgetBucket(el.extWidgetBelow, state.extension.widgets.belowEditor);
+
+  document.title = state.extension.title ? `${state.extension.title} \u00b7 ${state.defaultTitle}` : state.defaultTitle;
+}
+
+function renderWidgetBucket(node, widgets) {
+  node.innerHTML = "";
+  for (const lines of widgets.values()) {
+    const block = document.createElement("div");
+    block.className = "ext-widget-block";
+    for (const line of lines) {
+      const row = document.createElement("div");
+      row.className = "ext-widget-line";
+      row.textContent = line;
+      block.appendChild(row);
+    }
+    node.appendChild(block);
+  }
+  node.hidden = widgets.size === 0;
+}
+
+const TOAST_TYPES = new Set(["info", "warning", "error"]);
+
+function showToast(message, type) {
+  const text = stripAnsi(message).trim();
+  if (!text) return;
+  const kind = TOAST_TYPES.has(type) ? type : "info";
+  const node = document.createElement("div");
+  node.className = `toast toast-${kind}`;
+  node.textContent = text;
+  node.title = t("ui.dismiss");
+  node.onclick = () => node.remove();
+  el.toasts.appendChild(node);
+  // Errors linger: they usually explain why a command did nothing.
+  setTimeout(() => node.remove(), kind === "error" ? 10_000 : 6_000);
+}
+
+/**
+ * Queue a blocking dialog. pi blocks the extension until it is answered, and
+ * dialogs usually carry no timeout, so one must be on screen before pi can be
+ * unblocked — hence a queue rather than dropping a second request.
+ */
+function enqueueDialog(request) {
+  state.dialogQueue.push({ path: state.path, request });
+  if (!state.dialog) showNextDialog();
+}
+
+function showNextDialog() {
+  if (state.dialogTimer) {
+    clearTimeout(state.dialogTimer);
+    state.dialogTimer = null;
+  }
+  const item = state.dialogQueue.shift() ?? null;
+  state.dialog = item;
+  if (!item) return closeDialog();
+  renderDialog(item);
+}
+
+function answerDialog(item, payload) {
+  sendUiResponse(item.path, item.request.id, payload);
+  showNextDialog();
+}
+
+async function sendUiResponse(path, id, payload) {
+  if (!path) return;
+  try {
+    await api.uiResponse(path, { id, ...payload });
+  } catch (error) {
+    // The dialog is already gone (pi timed it out, or the subprocess was
+    // replaced). The stream is where a dead session becomes visible.
+    console.debug("ui-response failed", error);
+  }
+}
+
+function closeDialog() {
+  el.dialog.classList.add("hidden");
+  el.dialogTitle.textContent = "";
+  el.dialogBody.innerHTML = "";
+  el.dialogActions.innerHTML = "";
+}
+
+function renderDialog(item) {
+  const { request } = item;
+  el.dialogTitle.textContent = dialogTitleFor(request);
+  el.dialogBody.innerHTML = "";
+  el.dialogActions.innerHTML = "";
+
+  if (request.method === "select") {
+    const list = document.createElement("div");
+    list.className = "ui-dialog-list";
+    list.id = "ui-dialog-options";
+    for (const option of Array.isArray(request.options) ? request.options : []) {
+      const value = String(option);
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "ui-dialog-option";
+      button.textContent = stripAnsi(value);
+      button.onclick = () => answerDialog(item, { value });
+      list.appendChild(button);
+    }
+    el.dialogBody.appendChild(list);
+    el.dialogActions.appendChild(cancelButton(item));
+  } else if (request.method === "confirm") {
+    const message = document.createElement("div");
+    message.className = "ui-dialog-message";
+    message.textContent = stripAnsi(String(request.message ?? ""));
+    el.dialogBody.appendChild(message);
+    el.dialogActions.appendChild(primaryButton(t("ui.confirm"), () => answerDialog(item, { confirmed: true })));
+    el.dialogActions.appendChild(cancelButton(item, t("ui.deny"), { confirmed: false }));
+  } else if (request.method === "input") {
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "ui-dialog-input";
+    if (request.placeholder) input.placeholder = stripAnsi(String(request.placeholder));
+    input.onkeydown = (event) => {
+      if (event.key === "Enter" && !event.isComposing) {
+        event.preventDefault();
+        answerDialog(item, { value: input.value });
+      }
+    };
+    el.dialogBody.appendChild(input);
+    el.dialogActions.appendChild(primaryButton(t("ui.ok"), () => answerDialog(item, { value: input.value })));
+    el.dialogActions.appendChild(cancelButton(item));
+  } else if (request.method === "editor") {
+    const area = document.createElement("textarea");
+    area.className = "ui-dialog-editor";
+    area.value = typeof request.prefill === "string" ? request.prefill : "";
+    area.onkeydown = (event) => {
+      if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+        event.preventDefault();
+        answerDialog(item, { value: area.value });
+      }
+    };
+    el.dialogBody.appendChild(area);
+    el.dialogActions.appendChild(primaryButton(t("ui.ok"), () => answerDialog(item, { value: area.value })));
+    el.dialogActions.appendChild(cancelButton(item));
+  }
+
+  el.dialog.classList.remove("hidden");
+  // Focus only works once the dialog is visible (a hidden subtree cannot take it).
+  el.dialogBody.querySelector(".ui-dialog-input, .ui-dialog-editor")?.focus();
+
+  // A dialog may carry a deadline; pi auto-resolves it and the client is told
+  // not to track the timeout. Close the modal when it passes anyway, so a dead
+  // question does not sit on screen forever. No response is sent: pi moved on.
+  const timeout = Number(request.timeout);
+  if (Number.isFinite(timeout) && timeout > 0) {
+    state.dialogTimer = setTimeout(() => {
+      if (state.dialog === item) showNextDialog();
+    }, timeout);
+  }
+}
+
+function dialogTitleFor(request) {
+  const title = stripAnsi(String(request.title ?? ""));
+  if (title) return title;
+  if (request.method === "confirm") return t("ui.confirmTitle");
+  if (request.method === "input") return t("ui.inputTitle");
+  if (request.method === "editor") return t("ui.editorTitle");
+  return t("ui.selectTitle");
+}
+
+function primaryButton(label, onClick) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "ui-dialog-primary";
+  button.textContent = label;
+  button.onclick = onClick;
+  return button;
+}
+
+function cancelButton(item, label = t("ui.cancel"), payload = { cancelled: true }) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "ui-dialog-cancel";
+  button.textContent = label;
+  button.onclick = () => answerDialog(item, payload);
+  return button;
+}
+
+/**
+ * Drop every extension artefact of the session being left, and cancel any
+ * dialog it is blocked on. Called from `closeStream()`, which is the single
+ * choke point for attaching a different session.
+ */
+function resetExtensionUi() {
+  const pending = state.dialog ? [state.dialog, ...state.dialogQueue] : [...state.dialogQueue];
+  for (const item of pending) sendUiResponse(item.path, item.request.id, { cancelled: true });
+  state.dialog = null;
+  state.dialogQueue = [];
+  if (state.dialogTimer) {
+    clearTimeout(state.dialogTimer);
+    state.dialogTimer = null;
+  }
+  closeDialog();
+
+  state.extension.status = new Map();
+  state.extension.widgets = { aboveEditor: new Map(), belowEditor: new Map() };
+  state.extension.title = null;
+  el.toasts.innerHTML = "";
+  renderExtensionUi();
 }
 
 /** A live tool result arrives as `{content: [...]}`; keep the blocks intact. */
@@ -1069,12 +1584,17 @@ function applyDelta(event) {
   if (typeof event.usage?.output === "number" && event.usage.output > 0) {
     state.streamReportedTokens = event.usage.output;
   }
-  if (delta.type === "text_delta") {
+  // Every delta is generated output — text, thinking, or tool arguments — so each
+  // one starts the clock and feeds the estimate. `*_end` repeats the full content
+  // and is skipped to avoid counting it twice.
+  if (delta.type === "text_delta" || delta.type === "thinking_delta" || delta.type === "toolcall_delta") {
+    if (!state.streamStart) state.streamStart = performance.now();
     state.streamEstimatedTokens += estimateTokens(delta.delta ?? "");
+  }
+  if (delta.type === "text_delta") {
     ensureLive();
     appendText(delta.delta);
   } else if (delta.type === "thinking_delta") {
-    state.streamEstimatedTokens += estimateTokens(delta.delta ?? "");
     ensureLive();
     appendThinking(delta.delta);
   } else if (delta.type === "text_end") {
@@ -1135,7 +1655,9 @@ function fmtTokens(value) {
   if (!Number.isFinite(n)) return "?";
   if (n < 1000) return String(Math.round(n));
   if (n < 1e6) return `${(n / 1e3).toFixed(n < 1e5 ? 1 : 0)}k`;
-  return `${(n / 1e6).toFixed(n < 1e7 ? 2 : 1)}M`;
+  if (n < 1e9) return `${(n / 1e6).toFixed(n < 1e7 ? 2 : 1)}M`;
+  // Lifetime totals on a busy machine reach billions; "2824.9M" reads badly.
+  return `${(n / 1e9).toFixed(2)}G`;
 }
 
 function fmtCost(cost) {
@@ -1145,7 +1667,12 @@ function fmtCost(cost) {
   return `$${cost.toFixed(2)}`;
 }
 
-/** Output tokens per second. Prefixed with ≈ when it is an estimate. */
+/**
+ * Decode throughput of the message on screen: its output tokens over the time
+ * since its first delta. Scoping the ratio to a single message keeps both sides
+ * aligned — thinking counts on both (tokens and time), while request latency and
+ * tool execution stay out entirely. Prefixed with ≈ when the count is estimated.
+ */
 function currentSpeed() {
   if (!state.streaming || !state.streamStart) return null;
   const seconds = (performance.now() - state.streamStart) / 1000;
@@ -1158,6 +1685,13 @@ function currentSpeed() {
   return `${reported > 0 ? "" : "≈"}${rate.toFixed(1)} tok/s`;
 }
 
+/** Drop the in-flight measurement; called once per assistant message. */
+function resetSpeed() {
+  state.streamStart = 0;
+  state.streamReportedTokens = 0;
+  state.streamEstimatedTokens = 0;
+}
+
 function renderStats() {
   const stats = state.stats;
   const parts = [];
@@ -1167,31 +1701,31 @@ function renderStats() {
     const percent = usage.percent === null || usage.percent === undefined ? 0 : usage.percent;
     const width = Math.max(0, Math.min(100, percent)).toFixed(1);
     parts.push(
-      `<span class="stat" title="当前上下文占用 / 模型上下文窗口">` +
+      `<span class="stat" title="${t("stats.contextTitle")}">` +
         `<span class="ctx-bar"><i style="width:${width}%"></i></span>` +
-        `上下文 ${fmtTokens(usage.tokens)} / ${fmtTokens(usage.contextWindow)} · ${Number(percent).toFixed(1)}%</span>`,
+        `${t("stats.context", { used: fmtTokens(usage.tokens), window: fmtTokens(usage.contextWindow), percent: Number(percent).toFixed(1) })}</span>`,
     );
   }
 
   if (stats) {
     parts.push(
-      `<span class="stat" title="本次会话累计 token（输入 / 输出）">↑ ${fmtTokens(stats.tokens.input)} ↓ ${fmtTokens(stats.tokens.output)}</span>`,
+      `<span class="stat" title="${t("stats.tokensTitle")}">${t("stats.tokens", { input: fmtTokens(stats.tokens.input), output: fmtTokens(stats.tokens.output) })}</span>`,
     );
     if (stats.tokens.cacheRead > 0) {
-      parts.push(`<span class="stat" title="命中缓存的输入 token">缓存 ${fmtTokens(stats.tokens.cacheRead)}</span>`);
+      parts.push(`<span class="stat" title="${t("stats.cacheTitle")}">${t("stats.cache", { read: fmtTokens(stats.tokens.cacheRead) })}</span>`);
     }
-    parts.push(`<span class="stat" title="本次会话累计花费（美元）">${fmtCost(stats.cost)}</span>`);
+    parts.push(`<span class="stat" title="${t("stats.costTitle")}">${fmtCost(stats.cost)}</span>`);
     parts.push(
-      `<span class="stat" title="助手回复轮数 / 工具调用次数">${stats.assistantMessages} 轮 · ${stats.toolCalls} 工具</span>`,
+      `<span class="stat" title="${t("stats.turnsTitle")}">${t("stats.turns", { turns: stats.assistantMessages, tools: stats.toolCalls })}</span>`,
     );
   }
 
   const speed = currentSpeed() ?? state.lastSpeed;
   if (speed) {
-    parts.push(`<span class="stat speed" title="输出速度（估算值带 ≈）">⚡ ${speed}</span>`);
+    parts.push(`<span class="stat speed" title="${t("stats.speedTitle")}">${t("stats.speed", { speed })}</span>`);
   } else if (parts.length > 0) {
     // Keep the slot visible so it is obvious where the rate appears.
-    parts.push(`<span class="stat speed idle-speed" title="模型生成时这里显示输出速度">⚡ —</span>`);
+    parts.push(`<span class="stat speed idle-speed" title="${t("stats.speedIdleTitle")}">${t("stats.speedIdle")}</span>`);
   }
 
   el.statsItems.innerHTML = parts.join("");
@@ -1351,10 +1885,10 @@ async function handleMessagesClick(event) {
   const original = button.textContent;
   try {
     await copyTextToClipboard(text);
-    button.textContent = "已复制";
+    button.textContent = t("common.copied");
     button.classList.add("copied");
   } catch {
-    button.textContent = "复制失败";
+    button.textContent = t("common.copyFailed");
     button.classList.add("failed");
   }
   setTimeout(() => {
@@ -1369,7 +1903,7 @@ function revealToolImage(placeholder) {
   if (!src) return;
   const image = document.createElement("img");
   image.src = src;
-  image.alt = "工具返回的图片";
+  image.alt = t("msg.toolImage");
   image.loading = "lazy";
   image.decoding = "async";
   image.className = "tool-image";
@@ -1383,7 +1917,7 @@ function renderAttachments() {
   state.attachments.forEach((att, index) => {
     const node = document.createElement("div");
     node.className = "attachment";
-    node.innerHTML = `<img src="${att.dataUrl}" alt="附件" />`;
+    node.innerHTML = `<img src="${att.dataUrl}" alt="${t("msg.attachment")}" />`;
     const remove = document.createElement("button");
     remove.textContent = "×";
     remove.onclick = () => {
@@ -1402,10 +1936,19 @@ function addFiles(files) {
     reader.onload = () => {
       const dataUrl = String(reader.result);
       const comma = dataUrl.indexOf(",");
-      state.attachments.push({
+      const attachment = {
         dataUrl,
         mimeType: file.type || "image/png",
         data: dataUrl.slice(comma + 1),
+      };
+      state.attachments.push(attachment);
+      // Intrinsic size lets the sent bubble reserve space (renderImage emits
+      // width/height), so the scroll done at send time stays at the true bottom
+      // instead of coming up short once the image decodes.
+      measureImage(dataUrl).then((size) => {
+        if (!size) return;
+        Object.assign(attachment, size);
+        renderAttachments();
       });
       renderAttachments();
     };
@@ -1413,22 +1956,41 @@ function addFiles(files) {
   }
 }
 
+function measureImage(dataUrl) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight });
+    img.onerror = () => resolve(null);
+    img.src = dataUrl;
+  });
+}
+
 async function sendMessage() {
   if (!state.path) return;
   const text = el.input.value.trim();
-  const images = state.attachments.map((att) => ({ type: "image", data: att.data, mimeType: att.mimeType }));
+  const images = state.attachments.map((att) => ({
+    type: "image",
+    data: att.data,
+    mimeType: att.mimeType,
+    width: att.width,
+    height: att.height,
+  }));
   if (!text && images.length === 0) return;
 
   addMessage({ role: "user", content: text ? renderUserContent(text, images) : images });
+  // The bubble is appended below the current viewport; without this the user's
+  // own words stay out of sight until the first assistant delta scrolls again.
+  scrollToEnd();
   el.input.value = "";
   autoGrow();
+  hideCommandMenu();
   state.attachments = [];
   renderAttachments();
 
   try {
     await api.prompt(state.path, text, images.length ? images : undefined);
   } catch (error) {
-    addNotice(`发送失败：${error.message}`, "error");
+    addNotice(t("chat.sendFailed", { message: error.message }), "error");
     setStatus("idle");
   }
 }
@@ -1445,6 +2007,117 @@ function autoGrow() {
   el.input.style.height = `${Math.min(el.input.scrollHeight, 220)}px`;
 }
 
+// --------------------------------------------------------- slash commands
+//
+// Type `/` and the composer offers the commands pi can run for this session
+// (`get_commands`): extension commands, prompt templates, and skill commands.
+// Built-in TUI commands are not in that list, because pi does not execute them
+// from a `prompt` — offering them would promise something that cannot work.
+
+/** The `/token` being typed, or null when the input is not a bare command. */
+function commandQuery() {
+  const match = /^\/(\S*)$/.exec(el.input.value);
+  return match ? match[1] : null;
+}
+
+/**
+ * Fetch the session's commands once per attach.
+ *
+ * Best-effort on purpose: no menu is a missing convenience, not an error worth
+ * interrupting the chat for.
+ */
+async function loadCommands() {
+  const path = state.path;
+  if (!path) return;
+  try {
+    const data = await api.commands(path);
+    if (state.path !== path) return; // the user switched sessions mid-flight
+    state.commands = Array.isArray(data.commands) ? data.commands : [];
+  } catch {
+    state.commands = [];
+  }
+}
+
+function isExactCommand(value) {
+  return state.commands.some((command) => `/${command.name}` === value);
+}
+
+function updateCommandMenu() {
+  const query = commandQuery();
+  if (query === null || state.commands.length === 0) return hideCommandMenu();
+
+  // Reset the highlight when the query changes, keep it while arrowing around.
+  if (query !== state.commandQuery) {
+    state.commandQuery = query;
+    state.commandIndex = 0;
+  }
+
+  const needle = query.toLowerCase();
+  state.commandMatches = state.commands
+    .filter((command) => command.name.toLowerCase().includes(needle))
+    .sort((a, b) => {
+      const aPrefix = a.name.toLowerCase().startsWith(needle) ? 0 : 1;
+      const bPrefix = b.name.toLowerCase().startsWith(needle) ? 0 : 1;
+      return aPrefix - bPrefix || a.name.localeCompare(b.name);
+    });
+
+  if (state.commandMatches.length === 0) return hideCommandMenu();
+  state.commandIndex = Math.min(state.commandIndex, state.commandMatches.length - 1);
+  renderCommandMenu();
+}
+
+/** Only sources the shell knows get a translated badge; the rest show raw. */
+const COMMAND_SOURCE_KEYS = {
+  extension: "command.source.extension",
+  prompt: "command.source.prompt",
+  skill: "command.source.skill",
+};
+
+function renderCommandMenu() {
+  el.commandList.innerHTML = "";
+  state.commandMatches.forEach((command, index) => {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = `command-item${index === state.commandIndex ? " selected" : ""}`;
+    item.dataset.index = String(index);
+
+    const name = document.createElement("span");
+    name.className = "command-name";
+    name.textContent = `/${command.name}`;
+
+    const source = document.createElement("span");
+    source.className = `command-source command-source-${command.source}`;
+    source.textContent = t(COMMAND_SOURCE_KEYS[command.source] ?? "command.source.other");
+
+    const description = document.createElement("span");
+    description.className = "command-desc";
+    description.textContent = command.description || "";
+
+    item.append(name, source, description);
+    el.commandList.appendChild(item);
+  });
+
+  el.commandMenu.hidden = false;
+  el.commandList.querySelector(".command-item.selected")?.scrollIntoView({ block: "nearest" });
+}
+
+function hideCommandMenu() {
+  el.commandMenu.hidden = true;
+  state.commandMatches = [];
+  state.commandIndex = 0;
+  state.commandQuery = null;
+}
+
+/** Insert the highlighted command and leave the caret ready for arguments. */
+function completeCommand(index = state.commandIndex) {
+  const command = state.commandMatches[index];
+  if (!command) return;
+  el.input.value = `/${command.name} `;
+  autoGrow();
+  hideCommandMenu();
+  el.input.focus();
+}
+
 async function refreshSessionList() {
   try {
     const data = await api.sessions();
@@ -1457,6 +2130,772 @@ async function refreshSessionList() {
   } catch {
     /* ignore */
   }
+}
+
+/**
+ * One global SSE for run-state of *every* managed session.
+ *
+ * The per-session `/api/stream` only exists while that session is open in a
+ * tab, so it cannot report that a session you switched away from is still
+ * working. This stream carries only the running flag; the browser reconnects
+ * on its own if it drops.
+ */
+function openActivityStream() {
+  const source = new EventSource("/api/events");
+  source.onmessage = (event) => {
+    let frame;
+    try {
+      frame = JSON.parse(event.data);
+    } catch {
+      return;
+    }
+    if (frame.type === "activity") applyActivity(frame.path, frame.running);
+  };
+}
+
+function applyActivity(path, running) {
+  const session = state.sessions.find((s) => s.path === path);
+  if (!session || Boolean(session.running) === running) return;
+  session.running = running;
+  renderFolders();
+  renderSessions();
+}
+
+/* ------------------------------------------------------------------ *
+ * Preferences: theme and language
+ *
+ * Both belong to this shell, not to pi: pi's `theme` setting is about the
+ * terminal UI and has nothing to do with these colours, and pi has no locale
+ * setting at all. Writing either one into pi's settings.json would silently
+ * change a different program, so they live in localStorage.
+ * ------------------------------------------------------------------ */
+
+const THEME_KEY = "piShellTheme";
+const LOCALE_KEY = "piShellLocale";
+const THEMES = ["system", "dark", "light"];
+
+function readStored(key) {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null; // private mode / storage disabled
+  }
+}
+
+function storeValue(key, value) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // Preferences are a nicety; failing to persist must not break the page.
+  }
+}
+
+/**
+ * Resolve the preference against the OS and put it on <html>.
+ *
+ * The stylesheet only knows `[data-theme="light"]`; "system" is resolved here
+ * so CSS never has to ask a media query. index.html repeats this resolution
+ * inline, before the first paint, to avoid a dark flash on a light reload.
+ */
+function applyTheme() {
+  const prefersLight = window.matchMedia("(prefers-color-scheme: light)").matches;
+  document.documentElement.dataset.theme =
+    state.theme === "system" ? (prefersLight ? "light" : "dark") : state.theme;
+}
+
+function setTheme(preference) {
+  state.theme = THEMES.includes(preference) ? preference : "system";
+  storeValue(THEME_KEY, state.theme);
+  applyTheme();
+  if (state.view === "settings") renderSettings();
+}
+
+/**
+ * Switch language and reload.
+ *
+ * The transcript is rendered once per message with its labels baked in, so
+ * re-translating it in place would mean keeping a second, source-of-truth copy
+ * of every message. On localhost the reload is instant, the stream reconnects
+ * by itself, and the whole page — including what was already rendered — comes
+ * back consistent.
+ */
+function setLanguage(id) {
+  setLocale(id);
+  storeValue(LOCALE_KEY, getLocale());
+  location.reload();
+}
+
+function initPreferences() {
+  const storedTheme = readStored(THEME_KEY);
+  state.theme = THEMES.includes(storedTheme) ? storedTheme : "system";
+  applyTheme();
+  // While "system" is selected, keep following the OS.
+  window.matchMedia("(prefers-color-scheme: light)").addEventListener("change", () => {
+    if (state.theme === "system") applyTheme();
+  });
+
+  setLocale(readStored(LOCALE_KEY) ?? "zh-CN");
+}
+
+/* ------------------------------------------------------------------ *
+ * Settings view
+ *
+ * Two of the five sections are real and read-only (token totals, and the
+ * environment pi will load). The rest render what is known today plus what is
+ * still planned — placeholder panels, never fake controls.
+ * ------------------------------------------------------------------ */
+
+const SETTINGS_SECTIONS = ["usage", "resources", "models", "appearance", "agent"];
+/** The settings view owns a URL of its own, so Back/Forward and reload work. */
+const SETTINGS_ROUTE = "/settings";
+
+function openSettings(section = state.settingsSection) {
+  if (state.view !== "settings") {
+    applyView("settings");
+    // A real history entry, so the browser's back button returns to the chat
+    // instead of leaving the app — before this there was nothing app-side to
+    // go back to, and one Back press exited the whole shell.
+    history.pushState({ piShellView: "settings", pushed: true }, "", SETTINGS_ROUTE);
+  }
+  selectSettingsSection(section);
+}
+
+function closeSettings() {
+  if (state.view !== "settings") return;
+  // Undo our pushed entry via history.back() so back/forward stay in sync. A
+  // deep-loaded /settings (refresh) has no app entry underneath — going back
+  // there would leave the app, so replace the entry in place instead.
+  if (history.state?.piShellView === "settings" && history.state?.pushed) history.back();
+  else {
+    applyView("chat");
+    history.replaceState({ piShellView: "chat", pushed: false }, "", "/");
+  }
+}
+
+/** Swap the top-level view; history bookkeeping belongs to the call sites. */
+function applyView(view) {
+  state.view = view;
+  el.app.dataset.view = view;
+  // A hover card left over from the heatmap must not float over the chat.
+  if (view === "chat") hideHeatTip();
+}
+
+function selectSettingsSection(section) {
+  state.settingsSection = SETTINGS_SECTIONS.includes(section) ? section : "usage";
+  for (const node of el.settingsMenu.querySelectorAll(".settings-menu")) {
+    node.classList.toggle("active", node.dataset.section === state.settingsSection);
+  }
+  renderSettings();
+  void ensureSettingsData();
+}
+
+/** Which payload the current section needs. */
+function settingsDataKey(section = state.settingsSection) {
+  return section === "usage" ? "usage" : "environment";
+}
+
+/**
+ * Fetch the payload the current section needs, once.
+ *
+ * Re-entrant on purpose: after a fetch finishes we look again, because the user
+ * may have switched to a section that needs the *other* payload while the first
+ * request was in flight. Every path (loaded, in flight, failed) returns early,
+ * so the recursion terminates.
+ */
+async function ensureSettingsData() {
+  const key = settingsDataKey();
+  if (state.settingsData[key] || state.pendingKey === key || state.failedKey === key) return;
+
+  state.pendingKey = key;
+  state.settingsError = null;
+  state.failedKey = null;
+  if (state.view === "settings") renderSettings();
+  try {
+    state.settingsData[key] =
+      key === "usage" ? await api.settingsUsage() : await api.settingsEnvironment();
+  } catch (error) {
+    state.settingsError = error.message;
+    state.failedKey = key;
+  } finally {
+    state.pendingKey = null;
+  }
+  if (state.view === "settings") renderSettings();
+  void ensureSettingsData();
+}
+
+function renderSettings() {
+  if (state.settingsError) {
+    el.settingsBody.innerHTML = `<div class="settings-error">${esc(
+      t("settings.loadFailed", { message: state.settingsError }),
+    )}</div>`;
+    return;
+  }
+
+  const env = state.settingsData.environment;
+  const renderers = {
+    usage: () => renderUsageSection(state.settingsData.usage),
+    resources: () => renderResourcesSection(env),
+    models: () => renderModelsSection(env),
+    appearance: () => renderAppearanceSection(),
+    agent: () => renderAgentSection(env),
+  };
+  el.settingsBody.innerHTML = `<div class="settings-page">${renderers[state.settingsSection]()}</div>`;
+  // Controls live inside the rendered HTML, so they are bound here.
+  const modelSelect = document.getElementById("usage-model");
+  if (modelSelect) {
+    modelSelect.onchange = () => {
+      state.usageModel = modelSelect.value;
+      renderSettings();
+    };
+  }
+  const themeSelect = document.getElementById("theme-select");
+  if (themeSelect) {
+    themeSelect.onchange = () => setTheme(themeSelect.value);
+  }
+  const localeSelect = document.getElementById("locale-select");
+  if (localeSelect) {
+    localeSelect.onchange = () => setLanguage(localeSelect.value);
+  }
+}
+
+function renderUsageSection(report) {
+  // The slow-loading text is only honest for the first, uncached scan.
+  if (!report) return `<div class="settings-empty">${esc(t("settings.loadingSlow"))}</div>`;
+
+  // `models` only exists on a server new enough to carry the slices; when an
+  // older process is still running, say so instead of letting the filter look
+  // broken (the frontend is served from disk, so the page can outrun the server).
+  const slices = report.models ?? null;
+  const selected = slices && state.usageModel && slices[state.usageModel] ? state.usageModel : "";
+  state.usageModel = selected;
+  // The per-model slices carry the same four breakdowns as the report, so the
+  // filter is a switch of data source rather than a different code path.
+  const slice = selected && slices ? slices[selected] : report;
+  const totals = slice.totals;
+
+  const modelPicker = slices
+    ? `<select id="usage-model" class="settings-select">
+        <option value="">${esc(t("usage.allModels", { count: report.byModel.length }))}</option>
+        ${report.byModel
+          .map(
+            (row) =>
+              `<option value="${esc(row.key)}"${row.key === selected ? " selected" : ""}>` +
+              `${esc(row.key)} · ${esc(fmtCost(row.cost))} · ${esc(fmtTokens(row.total))}</option>`,
+          )
+          .join("")}
+      </select>`
+    : `<select id="usage-model" class="settings-select" disabled>
+        <option>${esc(t("usage.filterNeedsRestart"))}</option>
+      </select>`;
+
+  const header = `
+    <h2>${esc(t("usage.title"))}</h2>
+    <p class="settings-lead">${esc(
+      t("usage.lead", { files: report.scanned.files, messages: report.scanned.messages }),
+    )}</p>
+    <div class="settings-toolbar">
+      <label for="usage-model">${esc(t("usage.model"))}</label>
+      ${modelPicker}
+      <span class="settings-toolbar-note">${
+        selected ? esc(t("usage.onlyModel", { model: selected })) : esc(t("usage.heatNote"))
+      }</span>
+    </div>`;
+
+  if (totals.calls === 0) {
+    return `${header}<div class="settings-empty">${esc(t("usage.empty"))}</div>`;
+  }
+
+  const cards = `
+    <div class="settings-cards">
+      ${card(t("usage.card.cost"), fmtCost(totals.cost), t("usage.card.costSub", { count: fmtNum(totals.calls) }))}
+      ${card(t("usage.card.total"), fmtTokens(totals.total), t("usage.card.totalSub", { input: fmtTokens(totals.input) }))}
+      ${card(t("usage.card.output"), fmtTokens(totals.output), t("usage.card.outputSub", { reasoning: fmtTokens(totals.reasoning) }))}
+      ${card(t("usage.card.cacheRead"), fmtTokens(totals.cacheRead), t("usage.card.cacheReadSub", { cacheWrite: fmtTokens(totals.cacheWrite) }))}
+    </div>`;
+
+  const modelColumns = [t("col.calls"), t("col.input"), t("col.output"), t("col.total"), t("col.cost")];
+  const dayColumns = [
+    t("col.calls"),
+    t("col.input"),
+    t("col.output"),
+    t("col.cacheRead"),
+    t("col.cacheWrite"),
+    t("col.total"),
+    t("col.cost"),
+  ];
+
+  // With a filter on, the all-models table would not respond to it — say so by
+  // leaving it out rather than showing numbers that contradict the cards.
+  const byModelSection = selected
+    ? ""
+    : section(t("usage.byModel"), table(
+        [t("col.model"), ...modelColumns],
+        report.byModel.map((row) => [
+          esc(row.label),
+          fmtNum(row.calls),
+          fmtTokens(row.input),
+          fmtTokens(row.output),
+          fmtTokens(row.total),
+          fmtCost(row.cost),
+        ]),
+      ));
+
+  return `${header}${cards}
+    ${section(t("usage.heatmap"), renderHeatmap(slice.byDay, report.byDay))}
+    ${section(t("usage.byDay"), table(
+      [t("col.date"), ...dayColumns],
+      slice.byDay.map((row) => [
+        esc(row.label),
+        fmtNum(row.calls),
+        fmtTokens(row.input),
+        fmtTokens(row.output),
+        fmtTokens(row.cacheRead),
+        fmtTokens(row.cacheWrite),
+        fmtTokens(row.total),
+        fmtCost(row.cost),
+      ]),
+    ))}
+    ${byModelSection}
+    ${section(t("usage.byProject"), table(
+      [t("col.project"), ...modelColumns],
+      slice.byProject.map((row) => [
+        esc(prettyPath(row.label)),
+        fmtNum(row.calls),
+        fmtTokens(row.input),
+        fmtTokens(row.output),
+        fmtTokens(row.total),
+        fmtCost(row.cost),
+      ]),
+    ))}
+    ${section(t("usage.bySession"), table(
+      [t("col.session"), ...modelColumns],
+      slice.bySession.map((row) => [
+        esc(row.label),
+        fmtNum(row.calls),
+        fmtTokens(row.input),
+        fmtTokens(row.output),
+        fmtTokens(row.total),
+        fmtCost(row.cost),
+      ]),
+    ))}`;
+}
+
+/**
+ * GitHub-style calendar: one cell per day, columns are weeks, shade is that
+ * day's token total.
+ *
+ * Differences from GitHub, on purpose: the range runs from the first day with
+ * usage to today (no year of empty history), and the four shades are quantiles
+ * of the non-zero days, so a single huge day cannot flatten everything else
+ * into the lightest shade.
+ */
+function renderHeatmap(byDay, axisDays = byDay) {
+  const totalsByDay = new Map(
+    byDay.filter((row) => row.key !== "unknown").map((row) => [row.key, row]),
+  );
+  // The axis always comes from the whole report, not from the current model
+  // slice, so switching models re-shades the same grid instead of rescaling it.
+  const days = axisDays.filter((row) => row.key !== "unknown").map((row) => row.key).sort();
+  if (days.length === 0) return `<div class="settings-empty">${esc(t("usage.heat.none"))}</div>`;
+
+  const thresholds = heatThresholds([...totalsByDay.values()].map((row) => row.total));
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const todayKey = dayKey(today);
+
+  // Monday-start weeks: JS counts from Sunday, so shift by one.
+  const start = dayFromKey(days[0]);
+  start.setDate(start.getDate() - ((start.getDay() + 6) % 7));
+
+  const columns = [];
+  const cursor = new Date(start);
+  // A month label goes on the first week that starts inside that month.
+  let lastMonth = -1;
+  while (cursor <= today) {
+    const cells = [];
+    const month = cursor.getMonth();
+    const label = month === lastMonth ? "" : monthLabel(cursor);
+    lastMonth = month;
+    for (let row = 0; row < 7; row += 1) {
+      const key = dayKey(cursor);
+      const past = cursor <= today;
+      const entry = totalsByDay.get(key);
+      if (!past) {
+        // Days that have not happened yet: no colour, no tooltip.
+        cells.push(`<div class="heat-cell future"></div>`);
+      } else if (!entry) {
+        cells.push(
+          `<div class="heat-cell level-0" data-day="${esc(key)}" data-total="0" data-calls="0"></div>`,
+        );
+      } else {
+        cells.push(
+          `<div class="heat-cell level-${heatLevel(entry.total, thresholds)}${key === todayKey ? " today" : ""}" ` +
+            `data-day="${esc(key)}" data-total="${entry.total}" data-input="${entry.input}" ` +
+            `data-output="${entry.output}" data-cache-read="${entry.cacheRead}" ` +
+            `data-cache-write="${entry.cacheWrite}" data-reasoning="${entry.reasoning}" ` +
+            `data-cost="${entry.cost}" data-calls="${entry.calls}"></div>`,
+        );
+      }
+      cursor.setDate(cursor.getDate() + 1);
+    }
+    columns.push(
+      `<div class="heat-col"><div class="heat-month">${label ? esc(label) : ""}</div>${cells.join("")}</div>`,
+    );
+  }
+
+  return `<div class="heatmap-scroll">
+    <div class="heatmap">
+      <div class="heat-weekdays">
+        <div class="heat-month"></div>
+        <div>${esc(t("usage.weekday.mon"))}</div><div></div><div>${esc(t("usage.weekday.wed"))}</div><div></div><div>${esc(t("usage.weekday.fri"))}</div><div></div><div></div>
+      </div>
+      <div class="heat-cols">${columns.join("")}</div>
+    </div>
+    <div class="heatmap-legend">${esc(t("usage.heat.less"))} <span class="heat-cell level-0"></span><span class="heat-cell level-1"></span><span class="heat-cell level-2"></span><span class="heat-cell level-3"></span><span class="heat-cell level-4"></span> ${esc(t("usage.heat.more"))}</div>
+  </div>`;
+}
+
+/**
+ * Hover card for a heatmap cell: the day's totals, without the ~1s delay and
+ * OS styling of a native `title`. The tooltip is a single fixed-position
+ * element reused for every cell (and hidden when the grid scrolls, since its
+ * coordinates are viewport-based).
+ */
+function showHeatTip(cell) {
+  const { day, total, input, output, cacheRead, cacheWrite, reasoning, cost, calls } = cell.dataset;
+  const tip = el.heatTip;
+  const rows = Number(calls ?? 0) > 0
+    ? [
+        `<div class="heat-tip-head">${esc(formatDayLabel(day))}</div>`,
+        `<div class="heat-tip-strong">${esc(fmtTokens(total))} token</div>`,
+        `<div class="heat-tip-dim">${esc(
+          t("usage.heat.tipInput", { input: fmtTokens(input), output: fmtTokens(output) }),
+        )}${
+          Number(reasoning) > 0 ? esc(t("usage.heat.tipThinking", { reasoning: fmtTokens(reasoning) })) : ""
+        }</div>`,
+        `<div class="heat-tip-dim">${esc(
+          t("usage.heat.tipCache", { cacheRead: fmtTokens(cacheRead), cacheWrite: fmtTokens(cacheWrite) }),
+        )}</div>`,
+        `<div class="heat-tip-strong">${esc(
+          t("usage.heat.tipCalls", { cost: fmtCost(Number(cost ?? 0)), calls: fmtNum(calls) }),
+        )}</div>`,
+      ].join("")
+    : [
+        `<div class="heat-tip-head">${esc(formatDayLabel(day))}</div>`,
+        `<div class="heat-tip-dim">${esc(t("usage.heat.noRecord"))}</div>`,
+      ].join("");
+
+  tip.innerHTML = rows;
+  tip.hidden = false;
+
+  // Above the cell, clamped to the viewport; below it when there is no room.
+  const cellBox = cell.getBoundingClientRect();
+  const box = tip.getBoundingClientRect();
+  let top = cellBox.top - box.height - 8;
+  if (top < 8) top = cellBox.bottom + 8;
+  let left = cellBox.left + cellBox.width / 2 - box.width / 2;
+  left = Math.max(8, Math.min(left, window.innerWidth - box.width - 8));
+  tip.style.top = `${Math.round(top)}px`;
+  tip.style.left = `${Math.round(left)}px`;
+}
+
+function hideHeatTip() {
+  el.heatTip.hidden = true;
+}
+
+/** `2026-10-03` → `2026-10-03 Sat` / `2026-10-03 周六`. */
+function formatDayLabel(key) {
+  const date = dayFromKey(key);
+  const weekday = new Intl.DateTimeFormat(getLocale(), { weekday: "short" }).format(date);
+  return t("usage.date.weekday", { date: key, weekday });
+}
+
+/** Column label above a heatmap week: "10月" / "Oct", in the active locale. */
+function monthLabel(date) {
+  return new Intl.DateTimeFormat(getLocale(), { month: "short" }).format(date);
+}
+function heatThresholds(values) {
+  const sorted = values.filter((value) => value > 0).sort((a, b) => a - b);
+  if (sorted.length === 0) return [0, 0, 0];
+  const at = (p) => sorted[Math.min(sorted.length - 1, Math.floor(p * sorted.length))];
+  return [at(0.25), at(0.5), at(0.75)];
+}
+
+function heatLevel(value, thresholds) {
+  if (!(value > 0)) return 0;
+  let level = 1;
+  for (const threshold of thresholds) if (value > threshold) level += 1;
+  return Math.min(level, 4);
+}
+
+/** `YYYY-MM-DD` (local) → `Date` at local midnight. */
+function dayFromKey(key) {
+  const [year, month, day] = key.split("-").map(Number);
+  return new Date(year, (month ?? 1) - 1, day ?? 1);
+}
+
+function dayKey(date) {
+  const pad = (value) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+function renderResourcesSection(env) {
+  if (!env) return `<div class="settings-empty">${esc(t("settings.loading"))}</div>`;
+
+  const skills = env.skills.length
+    ? `<ul class="settings-list">${env.skills
+        .map(
+          (skill) => `<li>
+            <div class="item-title">${esc(skill.name)}<span class="settings-tag">${esc(skill.scope)}</span></div>
+            ${skill.description ? `<div class="item-meta">${esc(skill.description)}</div>` : ""}
+            <div class="item-meta"><code>${esc(prettyPath(skill.path))}</code></div>
+          </li>`,
+        )
+        .join("")}</ul>`
+    : `<div class="settings-empty">${esc(
+        t("resources.noSkills", { dir: prettyPath(env.agentDir) }),
+      )}</div>`;
+
+  const servers = env.mcpServers.length
+    ? `<ul class="settings-list">${env.mcpServers
+        .map(
+          (server) => `<li>
+            <div class="item-title">${esc(server.name)}
+              <span class="settings-tag">${esc(server.transport)}</span>
+              <span class="settings-tag ${server.enabled ? "on" : "off"}">${esc(
+                server.enabled ? t("resources.enabled") : t("resources.disabled"),
+              )}</span>
+            </div>
+            <div class="item-meta"><code>${esc(server.target)}</code></div>
+            ${server.description ? `<div class="item-meta">${esc(server.description)}</div>` : ""}
+          </li>`,
+        )
+        .join("")}</ul>`
+    : `<div class="settings-empty">${esc(
+        t("resources.noMcp", { dir: prettyPath(env.agentDir) }),
+      )}</div>`;
+
+  const resourceRows = [
+    [t("resources.packages"), env.resourcePaths.packages],
+    ["extensions", env.resourcePaths.extensions],
+    ["skills", env.resourcePaths.skills],
+    ["prompts", env.resourcePaths.prompts],
+    ["themes", env.resourcePaths.themes],
+  ];
+  const resources = resourceRows
+    .filter(([, list]) => list.length > 0)
+    .map(
+      ([label, list]) =>
+        `<li><div class="item-title">${esc(label)}</div><div class="item-meta">${list
+          .map((item) => `<code>${esc(item)}</code>`)
+          .join("、")}</div></li>`,
+    )
+    .join("");
+
+  return `
+    <h2>${esc(t("resources.title"))}</h2>
+    <p class="settings-lead">${esc(t("resources.lead", { dir: prettyPath(env.agentDir) }))}</p>
+    ${section(t("resources.skills", { count: env.skills.length }), skills)}
+    ${section(t("resources.mcp", { count: env.mcpServers.length }), servers)}
+    ${section(
+      t("resources.paths"),
+      resources
+        ? `<ul class="settings-list">${resources}</ul>`
+        : `<div class="settings-empty">${esc(
+            t("resources.noPaths", {
+              state: env.resourcePaths.enableSkillCommands
+                ? t("resources.pathsEnabled")
+                : t("resources.pathsDisabled"),
+            }),
+          )}</div>`,
+    )}
+    ${notes(env)}`;
+}
+
+function renderModelsSection(env) {
+  if (!env) return `<div class="settings-empty">${esc(t("settings.loading"))}</div>`;
+  return `
+    <h2>${esc(t("models.title"))}</h2>
+    <p class="settings-lead">${esc(t("models.lead"))}</p>
+    ${section(
+      t("models.current"),
+      keyValueTable([
+        [t("models.defaultProvider"), env.defaults.provider ?? t("models.unsetProvider")],
+        [t("models.defaultModel"), env.defaults.model ?? t("models.unset")],
+        [t("models.defaultThinking"), env.defaults.thinkingLevel ?? t("models.unsetThinking")],
+        [t("models.theme"), env.defaults.theme ?? "system"],
+        [t("models.hideThinking"), env.defaults.hideThinkingBlock ? t("models.yes") : t("models.no")],
+        ["models.json", fileLine(env, "models.json")],
+        ["auth.json", fileLine(env, "auth.json")],
+      ]),
+    )}
+    ${section(
+      t("models.switchTitle"),
+      `<p class="settings-lead" style="margin:0">${esc(t("models.switchLead"))}</p>`,
+    )}
+    ${planned([t("models.plan.1"), t("models.plan.2"), t("models.plan.3")])}`;
+}
+
+/**
+ * Language and theme. Unlike every other section these two are real controls:
+ * they are the shell's own preferences, so they need nothing from pi and can be
+ * applied immediately.
+ */
+function renderAppearanceSection() {
+  const themes = [
+    ["system", t("appearance.themeSystem")],
+    ["dark", t("appearance.themeDark")],
+    ["light", t("appearance.themeLight")],
+  ];
+  const themePicker = `<select id="theme-select" class="settings-select">${themes
+    .map(
+      ([value, label]) =>
+        `<option value="${value}"${value === state.theme ? " selected" : ""}>${esc(label)}</option>`,
+    )
+    .join("")}</select>`;
+  const localePicker = `<select id="locale-select" class="settings-select">${LOCALES.map(
+    (entry) =>
+      `<option value="${esc(entry.id)}"${entry.id === getLocale() ? " selected" : ""}>${esc(
+        entry.label,
+      )}</option>`,
+  ).join("")}</select>`;
+
+  return `
+    <h2>${esc(t("appearance.title"))}</h2>
+    <p class="settings-lead">${esc(t("appearance.lead"))}</p>
+    ${section(
+      t("appearance.theme"),
+      `<div class="settings-toolbar" style="margin:0">${themePicker}</div>`,
+    )}
+    ${section(
+      t("appearance.language"),
+      `<div class="settings-toolbar" style="margin:0 0 8px">${localePicker}</div>` +
+        `<p class="settings-lead" style="margin:0">${esc(t("appearance.languageNote"))}</p>`,
+    )}
+    ${section(
+      t("appearance.storage"),
+      `<p class="settings-lead" style="margin:0">${esc(t("appearance.themeNote"))}</p>` +
+        `<p class="settings-lead" style="margin:6px 0 0">${esc(t("appearance.note"))}</p>`,
+    )}
+    ${planned([t("appearance.plan.2")])}`;
+}
+
+function renderAgentSection(env) {
+  if (!env) return `<div class="settings-empty">${esc(t("settings.loading"))}</div>`;
+  return `
+    <h2>${esc(t("agent.title"))}</h2>
+    <p class="settings-lead">${esc(t("agent.lead"))}</p>
+    ${section(
+      t("agent.piDefaults"),
+      keyValueTable([
+        [t("agent.defaultModel"), `${env.defaults.provider ?? "?"} / ${env.defaults.model ?? "?"}`],
+        [t("models.defaultThinking"), env.defaults.thinkingLevel ?? t("models.unset")],
+        [t("models.hideThinking"), env.defaults.hideThinkingBlock ? t("models.yes") : t("models.no")],
+        [
+          t("agent.skillCommands"),
+          env.resourcePaths.enableSkillCommands
+            ? t("agent.skillCommandsOn")
+            : t("agent.skillCommandsOff"),
+        ],
+      ]),
+    )}
+    ${section(
+      t("agent.configFiles"),
+      table(
+        [t("agent.colFile"), t("agent.colStatus"), t("agent.colSize"), t("agent.colMtime")],
+        env.files.map((file) => [
+          `<code>${esc(prettyPath(file.path))}</code>`,
+          file.exists ? t("agent.exists") : t("agent.missing"),
+          file.sizeBytes === null ? "-" : fmtBytes(file.sizeBytes),
+          file.mtime ? relativeTime(file.mtime) : "-",
+        ]),
+      ),
+    )}
+    ${section(
+      t("agent.service"),
+      keyValueTable([
+        [t("agent.host"), `${env.server.host}:${env.server.port}`],
+        [t("agent.sessionsDir"), prettyPath(env.server.sessionsDir)],
+        [t("agent.piBin"), env.server.piBin],
+        [t("agent.idle"), t("agent.minutes", { count: Math.round(env.server.idleTimeoutMs / 60000) })],
+        [t("agent.agentDir"), prettyPath(env.agentDir)],
+      ]),
+    )}
+    ${planned([t("agent.plan.1"), t("agent.plan.2"), t("agent.plan.3"), t("agent.plan.4")])}`;
+}
+
+/* ---------- small render helpers for the settings page ---------- */
+
+function section(title, body) {
+  return `<h3>${esc(title)}</h3>${body}`;
+}
+
+function card(label, value, sub) {
+  return `<div class="settings-card">
+    <div class="card-label">${esc(label)}</div>
+    <div class="card-value">${esc(value)}</div>
+    <div class="card-sub">${esc(sub)}</div>
+  </div>`;
+}
+
+/** `rows` are already-escaped HTML cells; the first column is the label. */
+function table(headers, rows) {
+  if (rows.length === 0) return `<div class="settings-empty">${esc(t("settings.noData"))}</div>`;
+  const head = headers.map((text) => `<th>${esc(text)}</th>`).join("");
+  const body = rows
+    .map(
+      (cells) =>
+        `<tr>${cells
+          .map((cell, index) => `<td class="${index === 0 ? "row-label" : ""}">${cell}</td>`)
+          .join("")}</tr>`,
+    )
+    .join("");
+  return `<table class="settings-table"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+}
+
+function keyValueTable(pairs) {
+  return `<table class="settings-table kv"><tbody>${pairs
+    .map(([key, value]) => `<tr><td class="row-label">${esc(key)}</td><td>${value}</td></tr>`)
+    .join("")}</tbody></table>`;
+}
+
+/** "What is planned here", rendered as a dashed box rather than a dead form. */
+function planned(items) {
+  return `<h3>${esc(t("settings.planned"))}</h3>
+    <div class="settings-todo">
+      <div class="muted">${esc(t("settings.plannedNote"))}</div>
+      <ul>${items.map((item) => `<li>${esc(item)}</li>`).join("")}</ul>
+    </div>`;
+}
+
+/** Footnote box. `noteIds` are dictionary keys, so unknown ones are dropped. */
+function notes(env) {
+  const lines = (env.noteIds ?? [])
+    .map((id) => t(`settings.note.${id}`))
+    .filter((line) => !line.startsWith("settings.note."));
+  if (lines.length === 0) return "";
+  return `<div class="settings-todo" style="margin-top:18px"><ul>${lines
+    .map((line) => `<li>${esc(line)}</li>`)
+    .join("")}</ul></div>`;
+}
+
+function fileLine(env, label) {
+  const file = env.files.find((entry) => entry.label === label);
+  if (!file || !file.exists) return t("agent.missing");
+  return t("agent.fileLine", {
+    size: fmtBytes(file.sizeBytes ?? 0),
+    time: relativeTime(file.mtime ?? ""),
+  });
+}
+
+function fmtNum(value) {
+  return Number(value).toLocaleString("en-US");
+}
+
+function fmtBytes(bytes) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / 1048576).toFixed(1)} MB`;
 }
 
 /** Keep the header title in step with a rename or a pending session's first message. */
@@ -1475,7 +2914,7 @@ async function createSession(cwd) {
     await openSession({
       path: created.path,
       cwd: created.cwd,
-      title: "新会话",
+      title: t("prompt.newSessionTitle"),
       pending: true,
     });
     el.input.focus();
@@ -1487,7 +2926,7 @@ async function createSession(cwd) {
 /** Ask which folder to create the session in. */
 function promptForFolder() {
   const suggestion = state.cwd || state.home || "~";
-  const answer = window.prompt("在哪个文件夹新建会话？（输入绝对路径）", suggestion);
+  const answer = window.prompt(t("prompt.newFolder"), suggestion);
   if (answer === null) return;
   const cwd = answer.trim();
   if (cwd) createSession(cwd);
@@ -1500,7 +2939,7 @@ function promptForFolder() {
  */
 async function renameSession(session, node) {
   const current = session.name || session.title;
-  const answer = window.prompt("重命名会话", current);
+  const answer = window.prompt(t("prompt.rename"), current);
   if (answer === null) return;
   const name = answer.trim();
   if (!name || name === current) return;
@@ -1514,7 +2953,7 @@ async function renameSession(session, node) {
     // but only when this session's stream is live; refresh for the rest.
     await refreshSessionList();
   } catch (error) {
-    window.alert(`重命名失败：${error.message}`);
+    window.alert(t("alert.renameFailed", { message: error.message }));
   }
 }
 
@@ -1524,7 +2963,7 @@ async function renameSession(session, node) {
  */
 async function deleteSession(session) {
   const label = session.title.length > 40 ? `${session.title.slice(0, 40)}…` : session.title;
-  const ok = window.confirm(`删除会话「${label}」？\n${prettyPath(session.cwd)} · 该操作可在废纸篓找回（如装有 trash）。`);
+  const ok = window.confirm(t("confirm.deleteSession", { label, path: prettyPath(session.cwd) }));
   if (!ok) return;
 
   try {
@@ -1533,12 +2972,12 @@ async function deleteSession(session) {
       closeStream();
       state.path = null;
       el.messages.innerHTML = "";
-      el.chatTitle.textContent = "选择一个会话";
+      el.chatTitle.textContent = t("chat.selectSession");
       el.chatMeta.textContent = "";
     }
     await refreshSessionList();
   } catch (error) {
-    window.alert(`删除失败：${error.message}`);
+    window.alert(t("alert.deleteFailed", { message: error.message }));
   }
 }
 
@@ -1550,8 +2989,7 @@ async function deleteSession(session) {
 async function deleteFolderSessions(folder) {
   const label = prettyPath(folder.cwd);
   const ok = window.confirm(
-    `删除「${label}」下的全部 ${folder.sessionCount} 个会话？\n\n` +
-      `只删会话文件（进废纸篓可找回），目录本身和里面的其他文件不会动。`,
+    t("confirm.deleteFolder", { label, count: folder.sessionCount }),
   );
   if (!ok) return;
 
@@ -1562,21 +3000,26 @@ async function deleteFolderSessions(folder) {
       closeStream();
       state.path = null;
       el.messages.innerHTML = "";
-      el.chatTitle.textContent = "选择一个会话";
+      el.chatTitle.textContent = t("chat.selectSession");
       el.chatMeta.textContent = "";
     }
     if (state.cwd === folder.cwd) state.cwd = null;
     await refreshSessionList();
-    window.alert(`已删除 ${result.deleted} 个会话。`);
+    window.alert(t("alert.deletedFolder", { count: result.deleted }));
   } catch (error) {
-    window.alert(`删除失败：${error.message}`);
+    window.alert(t("alert.deleteFailed", { message: error.message }));
   }
 }
 
 function bind() {
   el.send.onclick = sendMessage;
   el.abort.onclick = async () => {
-    if (state.path) await api.abort(state.path);
+    if (!state.path) return;
+    try {
+      await api.abort(state.path);
+    } catch (error) {
+      addNotice(t("chat.abortFailed", { message: error.message }), "error");
+    }
   };
   el.attach.onclick = () => el.file.click();
   el.file.onchange = () => {
@@ -1584,6 +3027,46 @@ function bind() {
     el.file.value = "";
   };
   el.refresh.onclick = refreshSessionList;
+  el.settings.onclick = () => openSettings();
+  el.settingsBack.onclick = closeSettings;
+  el.settingsMenu.addEventListener("click", (event) => {
+    const item = event.target.closest(".settings-menu");
+    if (item?.dataset.section) selectSettingsSection(item.dataset.section);
+  });
+
+  // Heatmap hover card. Delegated, because the grid is re-rendered on every
+  // filter change; `relatedTarget` keeps moving between cells from flickering.
+  el.settingsBody.addEventListener("pointerover", (event) => {
+    const cell = event.target.closest?.(".heat-cell[data-day]");
+    if (cell) showHeatTip(cell);
+  });
+  el.settingsBody.addEventListener("pointerout", (event) => {
+    if (!event.target.closest?.(".heat-cell")) return;
+    // Still inside another cell? Let the following pointerover take over.
+    if (event.relatedTarget?.closest?.(".heat-cell")) return;
+    hideHeatTip();
+  });
+  // The tip is positioned in viewport coordinates, so scrolling invalidates it.
+  el.settingsBody.addEventListener("scroll", hideHeatTip);
+  window.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") return;
+    // A blocking dialog owns Escape: the extension is waiting on it, and it is
+    // the only thing the user can act on until it is dismissed.
+    if (state.dialog) {
+      event.preventDefault();
+      answerDialog(state.dialog, { cancelled: true });
+      return;
+    }
+    if (state.view === "settings") {
+      event.preventDefault();
+      closeSettings();
+    }
+  });
+  // Browser Back/Forward must move between the app's own views, never off the
+  // page. The pushed entries carry their view; anything else is the chat.
+  window.addEventListener("popstate", () => {
+    applyView(history.state?.piShellView === "settings" ? "settings" : "chat");
+  });
   el.messages.addEventListener("click", handleMessagesClick);
   el.newSession.onclick = () => (state.cwd ? createSession(state.cwd) : promptForFolder());
   el.newFolder.onclick = promptForFolder;
@@ -1597,7 +3080,7 @@ function bind() {
       // The new model may support a different set of thinking levels.
       await loadModelControls();
     } catch (error) {
-      addNotice(`错误：${error.message}`, "error");
+      addNotice(t("common.error", { message: error.message }), "error");
     } finally {
       el.modelSelect.disabled = false;
     }
@@ -1612,18 +3095,51 @@ function bind() {
       state.thinkingLevel = level;
       updateChatMeta();
     } catch (error) {
-      addNotice(`错误：${error.message}`, "error");
+      addNotice(t("common.error", { message: error.message }), "error");
     } finally {
       el.thinkingSelect.disabled = false;
     }
   };
 
-  el.input.addEventListener("input", autoGrow);
+  el.input.addEventListener("input", () => {
+    autoGrow();
+    updateCommandMenu();
+  });
   el.input.addEventListener("keydown", (event) => {
+    const menuOpen = !el.commandMenu.hidden;
+
+    if (menuOpen && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
+      event.preventDefault();
+      const delta = event.key === "ArrowDown" ? 1 : -1;
+      const count = state.commandMatches.length;
+      state.commandIndex = (state.commandIndex + delta + count) % count;
+      renderCommandMenu();
+      return;
+    }
+    if (menuOpen && event.key === "Tab") {
+      event.preventDefault();
+      completeCommand();
+      return;
+    }
+    if (menuOpen && event.key === "Escape") {
+      event.preventDefault();
+      hideCommandMenu();
+      return;
+    }
     if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
       event.preventDefault();
+      // Accept the highlighted command unless the input already spells one out
+      // exactly — `/probe` + Enter should run it, not complete it to `/probe `.
+      if (menuOpen && !isExactCommand(el.input.value)) {
+        completeCommand();
+        return;
+      }
       sendMessage();
     }
+  });
+  el.commandList.addEventListener("click", (event) => {
+    const item = event.target.closest(".command-item");
+    if (item) completeCommand(Number(item.dataset.index));
   });
   el.input.addEventListener("paste", (event) => {
     const files = [...(event.clipboardData?.files || [])];
@@ -1653,18 +3169,32 @@ function bind() {
 }
 
 async function main() {
+  state.defaultTitle = document.title;
+  // /settings survives a refresh or a deep link: restore the view and take
+  // ownership of the current history entry (marked not-pushed, so closing
+  // settings replaces it in place instead of exiting via back()).
+  const initialView = location.pathname === SETTINGS_ROUTE ? "settings" : "chat";
+  history.replaceState(
+    { piShellView: initialView, pushed: false },
+    "",
+    initialView === "settings" ? SETTINGS_ROUTE : "/",
+  );
+  applyView(initialView);
+  if (initialView === "settings") selectSettingsSection();
+  initPreferences();
   bind();
   initSidebar();
   observeMermaid();
+  openActivityStream();
   await refreshSessionList();
   if (state.folders.length > 0) {
     await selectFolder(state.folders[0].cwd);
     const first = state.sessions.filter((s) => s.cwd === state.folders[0].cwd)[0];
     if (first) await openSession(first);
   } else {
-    el.chatTitle.textContent = "还没有会话";
-    el.chatMeta.textContent = state.home ? `点击左上角 ＋ 在 ${prettyPath(state.home)} 等目录新建会话` : "";
-    addNotice("还没有任何会话。点左上角 ＋ 选个文件夹开始。");
+    el.chatTitle.textContent = t("chat.noSessions");
+    el.chatMeta.textContent = state.home ? t("chat.noSessionsHint", { home: prettyPath(state.home) }) : "";
+    addNotice(t("chat.noSessionsNotice"));
   }
 }
 
@@ -1673,6 +3203,13 @@ main();
 // Exposed so the automated UI checks can assert on internal state.
 globalThis.piShellDebug = {
   state,
+  handleEvent,
+  openSettings,
+  closeSettings,
+  selectSettingsSection,
+  setTheme,
+  setLanguage,
+  applyTheme,
   currentSpeed,
   estimateTokens,
   fmtTokens,
