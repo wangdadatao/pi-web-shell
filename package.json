@@ -12,6 +12,7 @@
     "dev": "node --watch --env-file-if-exists=.env src/server/index.ts",
     "typecheck": "tsc --noEmit",
     "test": "node --test test/*.test.ts",
+    "ui:test": "node scripts/ui-test.ts",
     "plan": "node scripts/plan.ts",
     "shot": "node scripts/screenshot.ts",
     "vendor": "node scripts/vendor.ts",

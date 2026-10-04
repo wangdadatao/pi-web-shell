@@ -201,7 +201,7 @@
 - [x] Web 会话注入端专属规则：spawn 时统一带 `--append-system-prompt`（仅 web 子进程携带，CLI 不受影响），告知「本地图片用 ![描述](/绝对/路径.png) 内联」；同时把上一条补在 image-gen SKILL.md 里的展示规则撤回，单一事实源随代码走 — 验证：隔离环境新会话问「展示 dog.png」，模型主动回 `![dog.png](/绝对路径)`；会话文件 system 消息含注入文本（resume 会重放）；浏览器渲染为 /api/local-image 且真实解码；typecheck + 单测 31/31
 - [x] pi 发图：模型不能附图，改为正文 Markdown 引用本地图（`![alt](/abs/path.png)`、`file://`、`~/` 三种写法），新增 `GET /api/local-image` 代理——魔数嗅探只放行 PNG/JPEG/GIF/WEBP（不是任意文件读接口），ETag+mtime 缓存 — 验证：单测 31/31（sniff/扩展名伪装/相对路径 400/缺失 404）；curl 端到端（200+字节一致、txt 与 /etc/passwd 均 415、If-None-Match 304、URL 编码路径）；CDP 断言三种写法均重写为 `/api/local-image?path=`、外链不动、`md-img-local` 穿过 DOMPurify、图片在页面内真实解码（naturalWidth=1）
 - [ ] 分支树可视化（`get_tree` / `fork` / `clone`）
-- [ ] 把 UI 断言固定成 `npm run ui:test`（目前靠 `npm run shot ... --eval` 手跑）
+- [x] 把 UI 断言固定成 `npm run ui:test`（当初靠 `npm run shot ... --eval` 手跑）— 已固化：`scripts/ui-test.ts` 一条命令跑 typecheck + 单测 + 全部 `ui-test-*.ts`（共享一个隔离服务端；脚本约定：首参为 base URL 则不自举）— 验证：`npm run ui:test` 全绿
 - [ ] 多会话同屏 / 标签页
 - [ ] 工具图点击放大（现在最大 320px）
 - [ ] Linux / Windows 的等价开机自启（systemd user unit / 计划任务）
@@ -268,7 +268,7 @@ M2.7 的一刀切折叠难用：开关在右上角、离它控制的侧栏太远
 ## 已知取舍
 
 - [ ] 会话标题最多读文件头 256KB；极端情况下首条用户消息超出则回退为占位标题
-- [ ] 未处理 RPC 的扩展 UI 对话框（`extension_ui_request`），目前忽略
+- [x] ~~未处理 RPC 的扩展 UI 对话框（`extension_ui_request`），目前忽略~~ — 已处理：`extensionUi.ts` + 前端 `handleExtensionUiRequest`（对话框/状态/widget，含快照重放），单测 `test/extensionUi.test.ts`
 - [ ] 单用户单浏览器假设，未做多客户端并发写入保护
 
 ## M2.6 开源准备（2026-10-03）
@@ -372,3 +372,24 @@ M2.7 的一刀切折叠难用：开关在右上角、离它控制的侧栏太远
   （`settingsLoading` 单标志把另一次请求挡掉了）→ 改成按 payload 键记 `pendingKey` / `failedKey`
   并递归补取 — 验证：连点 usage→resources→models，三页都渲染出内容
 - 回归：typecheck 干净；单测 39/39；`ui-test-sidebar` / `ui-test-mermaid` / `ui-test-token-speed` 全过
+
+## M2.12 发送滚动、设置页路由与一键回归（2026-10-04）
+
+问题：发送后自己的气泡停在视口外，要等模型首个 delta 把它顺带滚进来——模型慢时用户以为没发出去，
+只能手动上拖；设置页只切视图不压历史，浏览器返回键没有应用内条目可回退，一下就退出了整个 shell；
+UI 断言有 5 个脚本但要逐个手跑。
+
+- [x] 发送即滚动：`sendMessage` 在 `addMessage` 后立即 `scrollToEnd`，不再依赖首个 delta；用户附图在
+  `addFiles` 时量出 intrinsic 尺寸随消息带上，`renderImage` 预留占位（data URL 解码后不再把滚动顶短）—
+  验证：`ui-test-scroll` 12 断言（顶部/中途/带图发送、输入清空、无异常）；临时还原修复后 5 项 FAIL，
+  确认测试真能抓到
+- [x] 设置页路由：`openSettings` pushState `/settings`，popstate 双向同步视图；应用内 ‹/Esc 走
+  `history.back()`；深链/刷新由服务端回落到 index.html + 启动时按 pathname 恢复视图；深链关闭用
+  replaceState 原地回 `/`（这条没有的话返回键仍会退出应用）— 验证：`ui-test-settings-route` 11 断言；
+  还原修复后 `history.back()` 实测把页面卸载（Inspected target navigated or closed），即原 bug 复现；
+  curl：`/settings` 200、`/settings/` 200、`/nope` 仍 404（未知路径不掩盖）
+- [x] ui:test 固化：`scripts/ui-test.ts` 一条命令 typecheck + 单测 + 全部 `ui-test-*.ts`（约定：首参为
+  base URL 则用之，裸跑则自举隔离服务端）— 验证：`npm run ui:test` 全绿；顺手修两个新脚本的 harness
+  bug（`BASE` 常量在 argv 赋值前捕获默认端口 4711，裸跑时打到了线上服务）
+- [x] 账本订正：「已知取舍」里 extension_ui_request 一条已过时（extensionUi.ts 早已落地），勾掉
+- 回归：typecheck 干净；单测 57/57；5 个 ui-test 全过
