@@ -419,3 +419,22 @@ UI 断言有 5 个脚本但要逐个手跑。
 - [x] i18n：新增 31 词条中英对齐（268/267+locale 名）；models/agent 菜单副标题摘掉「只读」；
   已完成的 plan 条目（models.plan.1 / agent.plan.1 / agent.plan.4）从字典与页面移除
 - 回归：typecheck 干净；单测 69/69；`npm run ui:test` 6 个脚本全绿
+
+## M2.14 设置页写操作二期：AGENTS.md 编辑 + MCP 启用禁用（2026-10-04）
+
+一期只写了 settings.json；这期补上全局指令和 MCP 开关，写盘纪律不变：备份、原子替换、
+拒写坏文件、写完 disposeAll 让子进程重读。
+
+- [x] AGENTS.md 编辑器：agent 页新增「全局指令（AGENTS.md）」分节，textarea 直编；服务端
+  `POST /api/settings/agents-md` 校验字符串与 1MB 上限，备份 `AGENTS.md.bak` 后原子写；
+  超限/缺失在页面明说（超限不进编辑器） — 验证：单测 3 例（改写+备份/新建无备份/非字符串
+  拒绝）；UI 断言种子渲染→编辑保存→磁盘逐字节核对（含 .bak 为改前内容）
+- [x] MCP 启用/禁用：resources 页每个 server 加开关；`POST /api/settings/mcp` 按 pi 自己的
+  写法——禁用写 `enabled: false`（保留条目不连接），启用删掉这个键（缺省即启用），
+  同文件其他条目与字段原样保留，备份 mcp.json.bak；写完 disposeAll 重连 — 验证：单测
+  3 例（禁用/启用删键/未知条目与缺文件拒绝）；UI 断言点禁用→磁盘 enabled:false、按钮翻
+  转→点启用→磁盘键被删且 command 等字段原样
+- [x] settingsStore 收敛出公共 `backupAndWrite`（备份+tmp+rename），三个写路径共用；
+  顺手修了 UI 测试里 agentDir 种子写错文件的测试 bug
+- [x] i18n 新增 11 词条中英对齐（279/278+locale 名）；CSS 补 textarea/开关样式
+- 回归：typecheck 干净；单测 75/75；`npm run ui:test` 全绿（settings-edit 扩到 28 断言）

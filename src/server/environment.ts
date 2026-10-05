@@ -17,7 +17,7 @@
 import { readFile, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { Config } from "./config.ts";
-import { EDITABLE_KEYS, editableValuesOf } from "./settingsStore.ts";
+import { EDITABLE_KEYS, editableValuesOf, readAgentsMd } from "./settingsStore.ts";
 import type {
   ConfigFileInfo,
   McpServerInfo,
@@ -34,7 +34,7 @@ export async function collectEnvironment(config: Config): Promise<SettingsEnviro
   const settingsPath = join(agentDir, "settings.json");
   const mcpPath = join(agentDir, "mcp.json");
 
-  const [settings, mcp, files, skills] = await Promise.all([
+  const [settings, mcp, files, skills, agentsMd] = await Promise.all([
     readJson(settingsPath),
     readJson(mcpPath),
     describeFiles([
@@ -45,6 +45,7 @@ export async function collectEnvironment(config: Config): Promise<SettingsEnviro
       ["AGENTS.md", join(agentDir, "AGENTS.md")],
     ]),
     listSkills(join(agentDir, "skills")),
+    readAgentsMd(agentDir),
   ]);
 
   return {
@@ -62,6 +63,7 @@ export async function collectEnvironment(config: Config): Promise<SettingsEnviro
       keys: EDITABLE_KEYS,
       values: editableValuesOf(settings),
     },
+    agentsMd,
     skills,
     mcpServers: listMcpServers(mcp, mcpPath),
     server: {

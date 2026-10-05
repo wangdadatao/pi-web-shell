@@ -31,6 +31,8 @@ const MESSAGES = {
     "api.usageFailed": "统计失败: {status}",
     "api.environmentFailed": "读取配置失败: {status}",
     "api.saveSettingsFailed": "保存设置失败: {status}",
+    "api.agentsMdFailed": "保存 AGENTS.md 失败: {status}",
+    "api.mcpFailed": "更新 MCP 状态失败: {status}",
     "api.newSessionFailed": "新建会话失败: {status}",
     "api.renameFailed": "重命名失败: {status}",
     "api.deleteFailed": "删除失败: {status}",
@@ -248,6 +250,8 @@ const MESSAGES = {
     "resources.pathsDisabled": "未启用",
     "resources.enabled": "已启用",
     "resources.disabled": "已禁用",
+    "resources.enable": "启用",
+    "resources.disable": "禁用",
     "resources.packages": "packages（插件）",
 
     /* ---------- settings: models (read-only) ---------- */
@@ -282,6 +286,14 @@ const MESSAGES = {
     "appearance.storage": "存在哪里",
     "appearance.themeNote": "主题目前只有内建深色/浅色两套：浅色配色是从 pi 的 light 主题取色后写死在本仓库里，运行时不依赖 pi（跟 --md-* 那批变量同样的做法）。",
     "appearance.plan.2": "以后可以考虑自定义主题文件（~/.pi/agent/themes）与字号/密度偏好",
+
+    "agentsMd.title": "全局指令（AGENTS.md）",
+    "agentsMd.lead": "每次会话注入给模型的全局指令。保存前自动备份为 AGENTS.md.bak；保存后运行中的 pi 子进程会被回收，重连后重新读取。",
+    "agentsMd.placeholder": "（文件还不存在，保存后创建）",
+    "agentsMd.save": "保存 AGENTS.md",
+    "agentsMd.saving": "保存中…",
+    "agentsMd.saved": "已保存（备份 {backup} · {size}）；子进程已回收重开",
+    "agentsMd.tooLarge": "文件超过 1MB，不在页面里编辑，请手动改。",
 
     /* ---------- settings: agent ---------- */
     "agent.title": "agent 设置",
@@ -332,6 +344,8 @@ const MESSAGES = {
     "api.usageFailed": "Failed to total usage: {status}",
     "api.environmentFailed": "Failed to read configuration: {status}",
     "api.saveSettingsFailed": "Failed to save settings: {status}",
+    "api.agentsMdFailed": "Failed to save AGENTS.md: {status}",
+    "api.mcpFailed": "Failed to update MCP state: {status}",
     "api.newSessionFailed": "Failed to create session: {status}",
     "api.renameFailed": "Rename failed: {status}",
     "api.deleteFailed": "Delete failed: {status}",
@@ -549,6 +563,8 @@ const MESSAGES = {
     "resources.pathsDisabled": "disabled",
     "resources.enabled": "enabled",
     "resources.disabled": "disabled",
+    "resources.enable": "Enable",
+    "resources.disable": "Disable",
     "resources.packages": "packages",
 
     /* ---------- settings: models (read-only) ---------- */
@@ -583,6 +599,14 @@ const MESSAGES = {
     "appearance.storage": "Where this is stored",
     "appearance.themeNote": "Only the two built-in themes exist. The light palette was resolved from pi's light theme once and hardcoded in this repo, the same way the --md-* variables are — nothing reads pi at runtime.",
     "appearance.plan.2": "Possible later: custom theme files (~/.pi/agent/themes), font size and density preferences",
+
+    "agentsMd.title": "Global instructions (AGENTS.md)",
+    "agentsMd.lead": "Injected into every session. An AGENTS.md.bak backup is written before saving; warm pi subprocesses are recycled afterwards.",
+    "agentsMd.placeholder": "(no file yet — saving creates it)",
+    "agentsMd.save": "Save AGENTS.md",
+    "agentsMd.saving": "Saving…",
+    "agentsMd.saved": "Saved (backup {backup} · {size}); subprocesses recycled",
+    "agentsMd.tooLarge": "The file is over 1 MB; edit it by hand instead.",
 
     /* ---------- settings: agent ---------- */
     "agent.title": "Agent",

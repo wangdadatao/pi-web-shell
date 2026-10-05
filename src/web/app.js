@@ -118,6 +118,30 @@ const api = {
     if (!res.ok) throw new Error(data.error || t("api.saveSettingsFailed", { status: res.status }));
     return data;
   },
+  /** Replace the agent dir's AGENTS.md (global instructions). */
+  async saveAgentsMd(content) {
+    const res = await fetch("/api/settings/agents-md", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content }),
+    });
+    if (res.status === 404) throw new Error(t("api.serverOutdated"));
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || t("api.agentsMdFailed", { status: res.status }));
+    return data;
+  },
+  /** Toggle one MCP server's enabled flag in mcp.json. */
+  async setMcpEnabled(name, enabled) {
+    const res = await fetch("/api/settings/mcp", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, enabled }),
+    });
+    if (res.status === 404) throw new Error(t("api.serverOutdated"));
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || t("api.mcpFailed", { status: res.status }));
+    return data;
+  },
   async newSession(cwd) {
     const res = await fetch("/api/sessions/new", {
       method: "POST",
@@ -234,6 +258,8 @@ const state = {
   settingsData: { usage: null, environment: null },
   /** Last settings.json save result; re-renders must not lose the message. */
   settingsSaveStatus: null,
+  /** Same for the AGENTS.md editor. */
+  agentsMdStatus: null,
   /** Payload being fetched right now, so we never ask twice. */
   pendingKey: null,
   /** Payload that failed, so we do not retry in a loop. */
@@ -2357,6 +2383,11 @@ function renderSettings() {
   // Controls live inside the rendered HTML, so they are bound here.
   const saveButton = document.getElementById("settings-save");
   if (saveButton) saveButton.onclick = saveEditableSettings;
+  const agentsMdSave = document.getElementById("agents-md-save");
+  if (agentsMdSave) agentsMdSave.onclick = saveAgentsMdAction;
+  for (const toggle of el.settingsBody.querySelectorAll("[data-mcp-name]")) {
+    toggle.onclick = () => toggleMcpServer(toggle.dataset.mcpName, toggle.dataset.mcpNext === "true", toggle);
+  }
   // A finished save survives the re-renders that follow it (optimistic update,
   // background refresh) because the message lives in state.
   if (state.settingsSaveStatus) {
@@ -2690,12 +2721,16 @@ function renderResourcesSection(env) {
               <span class="settings-tag ${server.enabled ? "on" : "off"}">${esc(
                 server.enabled ? t("resources.enabled") : t("resources.disabled"),
               )}</span>
+              <button class="settings-toggle" type="button" data-mcp-name="${esc(server.name)}" data-mcp-next="${
+                server.enabled ? "false" : "true"
+              }">${esc(server.enabled ? t("resources.disable") : t("resources.enable"))}</button>
             </div>
             <div class="item-meta"><code>${esc(server.target)}</code></div>
             ${server.description ? `<div class="item-meta">${esc(server.description)}</div>` : ""}
           </li>`,
         )
-        .join("")}</ul>`
+        .join("")}</ul>
+      <div id="mcp-status" class="settings-save-status" aria-live="polite"></div>`
     : `<div class="settings-empty">${esc(
         t("resources.noMcp", { dir: prettyPath(env.agentDir) }),
       )}</div>`;
@@ -2837,8 +2872,8 @@ function renderAgentSection(env) {
         ]),
       ),
     )}
-    ${section(
-      t("agent.service"),
+    ${section(t("agentsMd.title"), agentsMdEditor(env))}
+    ${section(t("agent.service"),
       keyValueTable([
         [t("agent.host"), `${env.server.host}:${env.server.port}`],
         [t("agent.sessionsDir"), prettyPath(env.server.sessionsDir)],
@@ -2852,6 +2887,70 @@ function renderAgentSection(env) {
 }
 
 /* ---------- editable settings.json (whitelisted keys, server-validated) ---------- */
+
+/** Editor for the agent dir's AGENTS.md — plain text, backed up server-side. */
+function agentsMdEditor(env) {
+  if (!env) return `<div class="settings-empty">${esc(t("settings.loading"))}</div>`;
+  const listed = env.files.find((file) => file.label === "AGENTS.md");
+  // Exists but content is null: too large to edit safely from a textarea.
+  if (env.agentsMd === null && listed?.exists) {
+    return `<div class="settings-empty">${esc(t("agentsMd.tooLarge"))}</div>`;
+  }
+  const status = state.agentsMdStatus;
+  const statusCls = status ? ` ${status.cls}` : "";
+  return `
+    <p class="settings-lead" style="margin:0 0 8px">${esc(t("agentsMd.lead"))}</p>
+    <textarea id="agents-md" class="settings-textarea" rows="12" spellcheck="false" placeholder="${esc(t("agentsMd.placeholder"))}">${esc(env.agentsMd ?? "")}</textarea>
+    <div class="settings-toolbar" style="margin:8px 0 0">
+      <button id="agents-md-save" class="settings-save" type="button">${esc(t("agentsMd.save"))}</button>
+      <span id="agents-md-status" class="settings-save-status${statusCls}" aria-live="polite">${esc(status?.text ?? "")}</span>
+    </div>`;
+}
+
+async function saveAgentsMdAction() {
+  const button = document.getElementById("agents-md-save");
+  const area = document.getElementById("agents-md");
+  if (!button || !area) return;
+  button.disabled = true;
+  state.agentsMdStatus = { cls: "saving", text: t("agentsMd.saving") };
+  renderSettings();
+  try {
+    const result = await api.saveAgentsMd(area.value);
+    if (state.settingsData.environment) state.settingsData.environment.agentsMd = area.value;
+    state.agentsMdStatus = {
+      cls: "ok",
+      text: t("agentsMd.saved", {
+        backup: result.backup ? result.backup.split("/").pop() : "",
+        size: fmtBytes(result.bytes ?? 0),
+      }),
+    };
+  } catch (error) {
+    state.agentsMdStatus = { cls: "error", text: error instanceof Error ? error.message : String(error) };
+  } finally {
+    renderSettings();
+    const fresh = document.getElementById("agents-md-save");
+    if (fresh) fresh.disabled = false;
+  }
+}
+
+/** Toggle one MCP server; the whole environment is refetched so tags and
+ * lists stay consistent (and the recycled subprocesses reconnect cleanly). */
+async function toggleMcpServer(name, enabled, button) {
+  if (!name || !button) return;
+  button.disabled = true;
+  try {
+    await api.setMcpEnabled(name, enabled);
+    state.settingsData.environment = await api.settingsEnvironment();
+    if (state.view === "settings") renderSettings();
+  } catch (error) {
+    button.disabled = false;
+    const status = document.getElementById("mcp-status");
+    if (status) {
+      status.className = "settings-save-status error";
+      status.textContent = error instanceof Error ? error.message : String(error);
+    }
+  }
+}
 
 const MODEL_SETTING_KEYS = ["defaultProvider", "defaultModel", "defaultThinkingLevel"];
 const AGENT_SETTING_KEYS = [

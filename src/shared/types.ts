@@ -345,6 +345,8 @@ export interface SettingsEnvironment {
   resourcePaths: ResourcePaths;
   /** Whitelisted keys the web may edit, with their current values. */
   editable: EditableSettings;
+  /** Content of the agent dir's AGENTS.md; null when missing or too large. */
+  agentsMd: string | null;
   skills: SkillInfo[];
   mcpServers: McpServerInfo[];
   /** How this web shell itself is configured (env vars, not pi's files). */

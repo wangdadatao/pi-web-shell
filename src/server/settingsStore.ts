@@ -56,6 +56,90 @@ export class SettingsValidationError extends Error {
   }
 }
 
+/** AGENTS.md is instructions, not config; a megabyte is already absurd. */
+const MAX_AGENTS_MD = 1024 * 1024;
+
+/** Write a whole small file: back the current bytes up, then swap atomically. */
+async function backupAndWrite(path: string, content: string): Promise<string | null> {
+  let backup: string | null = null;
+  try {
+    await copyFile(path, `${path}.bak`);
+    backup = `${path}.bak`;
+  } catch {
+    // No previous file: nothing to back up.
+  }
+  const tmp = `${path}.tmp`;
+  await writeFile(tmp, content, "utf8");
+  await rename(tmp, path);
+  return backup;
+}
+
+/** Replace the agent directory's AGENTS.md (global instructions). */
+export async function writeAgentsMd(
+  agentDir: string,
+  content: string,
+): Promise<{ backup: string | null; bytes: number }> {
+  if (typeof content !== "string") throw new SettingsValidationError("content must be a string");
+  if (content.length > MAX_AGENTS_MD) {
+    throw new SettingsValidationError(`AGENTS.md is larger than ${MAX_AGENTS_MD} bytes; edit it by hand`);
+  }
+  const backup = await backupAndWrite(join(agentDir, "AGENTS.md"), content);
+  return { backup, bytes: Buffer.byteLength(content, "utf8") };
+}
+
+/** Read AGENTS.md for the editor; null when missing or too large to edit. */
+export async function readAgentsMd(agentDir: string): Promise<string | null> {
+  try {
+    const content = await readFile(join(agentDir, "AGENTS.md"), "utf8");
+    return content.length > MAX_AGENTS_MD ? null : content;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Enable or disable one MCP server in mcp.json.
+ *
+ * pi's own rule is mirrored: `enabled: false` keeps the entry without
+ * connecting, an absent flag means enabled — so enabling *removes* the key
+ * instead of writing `true`, leaving the file the way pi itself would.
+ */
+export async function setMcpEnabled(
+  agentDir: string,
+  name: string,
+  enabled: boolean,
+): Promise<{ backup: string | null; enabled: boolean }> {
+  if (typeof name !== "string" || name.trim() === "") {
+    throw new SettingsValidationError("name must be a non-empty string");
+  }
+  if (typeof enabled !== "boolean") throw new SettingsValidationError("enabled must be a boolean");
+
+  const mcpPath = join(agentDir, "mcp.json");
+  let root: Record<string, unknown>;
+  try {
+    const parsed = JSON.parse(await readFile(mcpPath, "utf8")) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("not an object");
+    root = parsed as Record<string, unknown>;
+  } catch {
+    throw new SettingsValidationError("mcp.json is missing or not valid JSON; fix it by hand first");
+  }
+
+  const servers = root["mcpServers"];
+  if (!servers || typeof servers !== "object") {
+    throw new SettingsValidationError("mcp.json has no mcpServers object");
+  }
+  const spec = (servers as Record<string, unknown>)[name];
+  if (!spec || typeof spec !== "object") {
+    throw new SettingsValidationError(`unknown MCP server: ${name}`);
+  }
+
+  if (enabled) delete (spec as Record<string, unknown>)['enabled'];
+  else (spec as Record<string, unknown>)['enabled'] = false;
+
+  const backup = await backupAndWrite(mcpPath, `${JSON.stringify(root, null, 2)}\n`);
+  return { backup, enabled };
+}
+
 /** Tool-list entries: plain names or `+name` / `-name` modifiers. */
 const TOOL_ENTRY = /^[+-]?[A-Za-z0-9_][A-Za-z0-9_.:-]*$/;
 const MAX_STRING = 200;
@@ -98,10 +182,8 @@ export async function applySettingsPatch(
 
   const settingsPath = join(agentDir, "settings.json");
   let root: Record<string, unknown> = {};
-  let existed = false;
   try {
     const text = await readFile(settingsPath, "utf8");
-    existed = true;
     // A file that exists but does not parse must not be overwritten: the
     // user has to fix it by hand first, or this save would destroy data.
     try {
@@ -116,23 +198,13 @@ export async function applySettingsPatch(
     // Missing file: start from an empty object. Anything else (EACCES, …) bubbles.
   }
 
-  let backup: string | null = null;
-  if (existed) {
-    backup = `${settingsPath}.bak`;
-    await copyFile(settingsPath, backup);
-  }
-
   for (const [key, raw] of Object.entries(patch)) {
     const value = validateValue(key, EDITABLE_KEYS[key]!, raw);
     if (value === null) deletePath(root, key);
     else setPath(root, key, value);
   }
 
-  await mkdir(agentDir, { recursive: true });
-  const tmp = `${settingsPath}.tmp`;
-  await writeFile(tmp, `${JSON.stringify(root, null, 2)}\n`, "utf8");
-  await rename(tmp, settingsPath);
-
+  const backup = await backupAndWrite(settingsPath, `${JSON.stringify(root, null, 2)}\n`);
   return { values: editableValuesOf(root), backup };
 }
 

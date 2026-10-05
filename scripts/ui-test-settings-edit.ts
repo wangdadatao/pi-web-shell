@@ -147,9 +147,17 @@ const SEED = `{
   "compaction": { "enabled": true, "modelOverrides": { "x/y": { "reserveTokens": 999 } } },
   "retry": { "maxRetries": 3, "provider": { "maxRetries": 0 } }
 }`;
+const SEED_AGENTS_MD = "# 全局指令\n- 用中文回复\n";
+const SEED_MCP = JSON.stringify({
+  mcpServers: {
+    fetch: { command: "uvx", args: ["mcp-server-fetch"], description: "fetch things" },
+  },
+});
 
 async function main(baseUrl: string, agentDir: string): Promise<void> {
   await writeFile(join(agentDir, "settings.json"), SEED, "utf8");
+  await writeFile(join(agentDir, "AGENTS.md"), SEED_AGENTS_MD, "utf8");
+  await writeFile(join(agentDir, "mcp.json"), SEED_MCP, "utf8");
   const chromeBin = await findChrome();
   const port = 9000 + Math.floor(Math.random() * 900);
   const profile = await mkdtemp(join(tmpdir(), "pi-ui-settings-edit-"));
@@ -275,7 +283,49 @@ async function main(baseUrl: string, agentDir: string): Promise<void> {
     ok(String(rejected.cls).includes("error"), `out-of-range rejected visibly (${String(rejected.text)})`);
     ok((await readFile(join(agentDir, "settings.json"), "utf8")) === before, "rejected save left the file untouched");
 
-    // 6) the file on disk: edits applied, unknown keys and siblings preserved
+    // 6) AGENTS.md editor: seeded content, edit + save, backup on disk
+    await evalJs(`window.piShellDebug.selectSettingsSection("agent")`);
+    await sleep(300);
+    const seeded = (await evalJs(`document.getElementById("agents-md")?.value`)) as string;
+    ok(seeded === SEED_AGENTS_MD, `AGENTS.md seeded into the editor (got ${JSON.stringify(seeded?.slice(0, 20))})`);
+    await evalJs(`(() => {
+      const area = document.getElementById("agents-md");
+      area.value = "# 新指令\\n- 用中文回复\\n- 少度废话\\n";
+      document.getElementById("agents-md-save").click();
+    })()`);
+    await sleep(600);
+    const mdStatus = (await evalJs(`document.getElementById("agents-md-status")?.className ?? ""`)) as string;
+    ok(String(mdStatus).includes("ok"), `AGENTS.md save reported success (${mdStatus})`);
+    ok(
+      (await readFile(join(agentDir, "AGENTS.md"), "utf8")) === "# 新指令\n- 用中文回复\n- 少度废话\n",
+      "AGENTS.md written to disk",
+    );
+    ok(
+      (await readFile(join(agentDir, "AGENTS.md.bak"), "utf8")) === SEED_AGENTS_MD,
+      "AGENTS.md.bak holds the previous content",
+    );
+
+    // 7) MCP toggle: disable then re-enable, verified on disk
+    await evalJs(`window.piShellDebug.selectSettingsSection("resources")`);
+    await sleep(300);
+    ok(await evalJs(`!!document.querySelector('[data-mcp-name="fetch"]')`), "MCP server listed with a toggle");
+    await evalJs(`document.querySelector('[data-mcp-name="fetch"]').click()`);
+    await sleep(700);
+    let mcpDisk = JSON.parse(await readFile(join(agentDir, "mcp.json"), "utf8")) as {
+      mcpServers: Record<string, Record<string, unknown>>;
+    };
+    ok(mcpDisk.mcpServers["fetch"]?.["enabled"] === false, "disable wrote enabled:false");
+    const tagAfterDisable = (await evalJs(
+      `window.piShellDebug.selectSettingsSection("agent"), window.piShellDebug.selectSettingsSection("resources"), document.querySelector('[data-mcp-next="true"]')?.dataset.mcpNext`,
+    )) as string;
+    ok(tagAfterDisable === "true", "button flipped to enable after refresh");
+    await evalJs(`document.querySelector('[data-mcp-name="fetch"]').click()`);
+    await sleep(700);
+    mcpDisk = JSON.parse(await readFile(join(agentDir, "mcp.json"), "utf8")) as typeof mcpDisk;
+    ok(!("enabled" in (mcpDisk.mcpServers["fetch"] ?? {})), "enable removed the flag entirely");
+    ok(mcpDisk.mcpServers["fetch"]?.["command"] === "uvx", "mcp.json spec otherwise intact");
+
+    // 8) the file on disk: edits applied, unknown keys and siblings preserved
     const disk = JSON.parse(await readFile(join(agentDir, "settings.json"), "utf8")) as Record<string, unknown>;
     ok(disk["theme"] === "dark", "unknown key theme preserved");
     ok(disk["defaultProvider"] === undefined, "defaultProvider key removed");
@@ -291,11 +341,11 @@ async function main(baseUrl: string, agentDir: string): Promise<void> {
     ok(retry["maxRetries"] === 5, "retry.maxRetries written");
     ok(JSON.stringify(retry["provider"]) === JSON.stringify({ maxRetries: 0 }), "retry.provider preserved");
 
-    // 7) backup holds the pre-edit bytes (seed, from the first save)
+    // 9) backup holds the pre-edit bytes (seed, from the first save)
     const backup = await readFile(join(agentDir, "settings.json.bak"), "utf8");
     ok(JSON.parse(backup)["theme"] === "dark", "settings.json.bak exists with the pre-save state");
 
-    // 8) no page errors during the whole run
+    // 10) no page errors during the whole run
     ok(pageErrors.length === 0, `no page exceptions (got ${pageErrors.length}${pageErrors.length ? ": " + pageErrors[0] : ""})`);
 
     cdp.close();

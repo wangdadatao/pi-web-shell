@@ -10,7 +10,7 @@ import { isHostAllowed } from "./hostCheck.ts";
 import { ImageStore, isImageHash, stripInlineImages } from "./imageStore.ts";
 import { loadLocalImage } from "./localImage.ts";
 import { collectEnvironment } from "./environment.ts";
-import { SettingsValidationError, applySettingsPatch } from "./settingsStore.ts";
+import { SettingsValidationError, applySettingsPatch, setMcpEnabled, writeAgentsMd } from "./settingsStore.ts";
 import { normalizeCommands } from "./commands.ts";
 import { buildUiResponse } from "./extensionUi.ts";
 import { UsageIndex } from "./usageStats.ts";
@@ -159,6 +159,32 @@ export function createApp(deps: ServerDeps): Server {
 
       if (route === "GET /api/settings/environment") {
         return sendJson(res, 200, await collectEnvironment(config));
+      }
+      if (route === "POST /api/settings/agents-md") {
+        // Global instructions: a plain file replace with the same backup and
+        // subprocess-recycling guarantees as the settings.json patch.
+        const body = await readJson(req);
+        try {
+          const result = await writeAgentsMd(config.agentDir, String(body["content"] ?? ""));
+          await deps.registry.disposeAll();
+          return sendJson(res, 200, { ok: true, ...result });
+        } catch (error) {
+          if (error instanceof SettingsValidationError) return sendJson(res, 400, { error: error.message });
+          throw error;
+        }
+      }
+      if (route === "POST /api/settings/mcp") {
+        // Toggle one entry's `enabled` flag in mcp.json the way pi writes it
+        // itself: `false` keeps the entry disconnected, absent means enabled.
+        const body = await readJson(req);
+        try {
+          const result = await setMcpEnabled(config.agentDir, String(body["name"] ?? ""), body["enabled"] === true);
+          await deps.registry.disposeAll();
+          return sendJson(res, 200, { ok: true, ...result });
+        } catch (error) {
+          if (error instanceof SettingsValidationError) return sendJson(res, 400, { error: error.message });
+          throw error;
+        }
       }
       if (route === "POST /api/settings/save") {
         // A whitelisted `{key: value|null}` patch — never a document to write
