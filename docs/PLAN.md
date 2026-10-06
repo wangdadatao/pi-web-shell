@@ -203,7 +203,7 @@
 - [x] 分支树可视化（`get_tree` / `fork` / `clone`）— 已交付 M2.15（只读树+分叉+克隆+活动分支高亮；label 编辑与节点预览为二期）
 - [x] 把 UI 断言固定成 `npm run ui:test`（当初靠 `npm run shot ... --eval` 手跑）— 已固化：`scripts/ui-test.ts` 一条命令跑 typecheck + 单测 + 全部 `ui-test-*.ts`（共享一个隔离服务端；脚本约定：首参为 base URL 则不自举）— 验证：`npm run ui:test` 全绿
 - [ ] 多会话同屏 / 标签页
-- [ ] 工具图点击放大（现在最大 320px）
+- [x] 工具图点击放大（现在最大 320px）— 已随 M2.15 lightbox 交付（#messages 任意图片点击全尺寸查看）
 - [ ] Linux / Windows 的等价开机自启（systemd user unit / 计划任务）
 - [ ] 可选的 Docker 部署（供另一台机器使用）
 - [ ] 窄屏自适应布局（统计条 + 两个下拉在窄屏下会换行，未调）
