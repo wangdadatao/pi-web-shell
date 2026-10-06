@@ -276,6 +276,10 @@ async function main(baseUrl: string): Promise<void> {
       };
     })()`)) as Record<string, unknown>;
     ok(panel.open, "tree panel opens from the header button");
+    ok(
+      (await evalJs(`getComputedStyle(document.getElementById("tree-panel")).display`)) !== "none",
+      "tree panel actually renders (computed display)",
+    );
     ok(panel.turns === 2, `one row per turn on the spine (got ${panel.turns})`);
     ok(panel.forks === 2, `spine turns carry fork buttons (got ${panel.forks})`);
     ok(panel.activeTurns === 2, `active spine highlighted (got ${panel.activeTurns})`);
@@ -328,6 +332,10 @@ async function main(baseUrl: string): Promise<void> {
     await sleep(300);
     await evalJs(`window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }))`);
     ok(await evalJs(`document.getElementById("tree-panel").hidden`), "Escape closes the tree panel");
+    ok(
+      (await evalJs(`getComputedStyle(document.getElementById("tree-panel")).display`)) === "none",
+      "closed tree panel takes no space (computed display none)",
+    );
     await evalJs(`document.getElementById("tree-btn").click()`);
     await sleep(300);
     await evalJs(`document.getElementById("tree-panel").click()`);

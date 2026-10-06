@@ -491,3 +491,15 @@ M2.15 一版把每条消息渲染成一层，线性会话成了长楼梯（一�
 - 验证：ui-test-watch 21 断言（页内替换 EventSource 喂合成帧：开面板/独立流指向正确
   路径/快照尾巴/状态灯翻转/流式累积/工具行/message_end 定稿/重试用尽留提示/Esc 不误关/
   停止即断流）；npm run ui:test 9 个脚本全绿
+
+## M2.17.1 修复：监控栏从首帧就显示、眼睛关不掉（2026-10-04）
+
+用户实测抓到：监控栏从页面加载起就显示，点 👁 停止也藏不掉。根因与 overlay-panel
+当年踩过的同一颗雷——`#watch-panel { display: flex }` 压过 UA 的 `[hidden] { display: none }`，
+`hidden` 属性形同虚设；树面板/lightbox 当初各自打过补丁，监控栏漏了。
+
+- [x] `#watch-panel[hidden] { display: none }` 守卫补上；窄屏（≤860px）监控栏改为
+  全宽覆盖而非挤压对话列（用户 748px 截图里对话被挤到没法看）
+- [x] 测试升级：watch/tree 两脚本改断言 **computed display**（属性断言抓不到这类 bug
+  ——之前全绿的盲区），首帧不可见/打开渲染/停止归零三处都看真实样式
+- 验证：watch 23 断言、tree 17 断言全过；npm run ui:test 全绿

@@ -1147,6 +1147,26 @@ body {
   overflow: hidden;
 }
 
+/* Same trap the overlay-panel comment below warns about: display:flex here
+   beats the UA [hidden] rule, so the panel would paint from the first paint
+   and ignore stopWatch(). */
+#watch-panel[hidden] {
+  display: none;
+}
+
+/* Narrow screens: the panel overlays instead of squeezing the column. */
+@media (max-width: 860px) {
+  #chat:has(> #watch-panel:not([hidden])) {
+    padding-right: 0;
+  }
+
+  #watch-panel {
+    left: 10px;
+    right: 10px;
+    width: auto;
+  }
+}
+
 .watch-head {
   display: flex;
   align-items: center;

@@ -212,17 +212,28 @@ async function main(baseUrl: string): Promise<void> {
         JSON.stringify(frame),
       )} })`);
 
+    // 0) the panel must not paint before it is opened: display:flex on the
+    // panel beats the UA [hidden] rule unless the stylesheet guards it —
+    // this exact bug shipped once (visible from first paint, eye could not
+    // hide it), so assert the computed style, not the hidden property.
+    ok(
+      (await evalJs(`getComputedStyle(document.getElementById("watch-panel")).display`)) === "none",
+      "before watching: panel takes no space (computed display none)",
+    );
+
     // 1) watching opens the panel and its own stream to the right path
     await evalJs(`window.piShellDebug.startWatch({ path: "/tmp/watched.jsonl", title: "被盯的会话", cwd: "/tmp/proj/sub" })`);
     await sleep(200);
     const opened = (await evalJs(`(() => ({
       visible: !document.getElementById("watch-panel").hidden,
+      display: getComputedStyle(document.getElementById("watch-panel")).display,
       url: window.__watchFake.instances[0]?.url ?? "",
       title: document.getElementById("watch-title").textContent,
       status: document.getElementById("watch-status").className,
       chatPadded: getComputedStyle(document.getElementById("chat")).paddingRight !== "0px",
     }))()`)) as Record<string, unknown>;
     ok(opened.visible, "watch panel opens");
+    ok(opened.display === "flex", `panel actually renders (${opened.display})`);
     ok(String(opened.url).includes("/api/stream%3Fpath".replace("%3F", "?").replace("?", "%3F")) || String(opened.url).includes("/api/stream?path="), `own stream to /api/stream?path= (${opened.url})`);
     ok(String(opened.url).includes(encodeURIComponent("/tmp/watched.jsonl")), `stream points at the watched session (${opened.url})`);
     ok(opened.title === "被盯的会话", `title shown (${opened.title})`);
@@ -304,10 +315,14 @@ async function main(baseUrl: string): Promise<void> {
     await evalJs(`window.piShellDebug.stopWatch()`);
     const closed = (await evalJs(`(() => ({
       hidden: document.getElementById("watch-panel").hidden,
+      display: getComputedStyle(document.getElementById("watch-panel")).display,
       streamClosed: window.__watchFake.instances.every((i) => i.closed),
       watchNull: window.piShellDebug.state.watch === null,
     }))()`)) as Record<string, unknown>;
-    ok(closed.hidden && closed.streamClosed && closed.watchNull, "stopWatch closes the stream and clears state");
+    ok(
+      closed.hidden && closed.streamClosed && closed.watchNull && closed.display === "none",
+      `stopWatch closes the stream, clears state, and actually hides (${closed.display})`,
+    );
 
     // 8) no page errors during the whole run
     ok(pageErrors.length === 0, `no page exceptions (got ${pageErrors.length}${pageErrors.length ? ": " + pageErrors[0] : ""})`);
