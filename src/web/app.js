@@ -142,6 +142,37 @@ const api = {
     if (!res.ok) throw new Error(data.error || t("api.mcpFailed", { status: res.status }));
     return data;
   },
+  /** Branch tree of the open session (light reshape of pi's get_tree). */
+  async tree(path) {
+    const res = await fetch(`/api/tree?path=${encodeURIComponent(path)}`);
+    if (res.status === 404) throw new Error(t("api.serverOutdated"));
+    if (!res.ok) throw new Error(t("api.treeFailed", { status: res.status }));
+    return res.json();
+  },
+  /** Fork a new branch from a past user message. */
+  async fork(path, entryId) {
+    const res = await fetch("/api/fork", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path, entryId }),
+    });
+    if (res.status === 404) throw new Error(t("api.serverOutdated"));
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || t("api.forkFailed", { status: res.status }));
+    return data;
+  },
+  /** Duplicate the active branch into a new session. */
+  async clone(path) {
+    const res = await fetch("/api/clone", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path }),
+    });
+    if (res.status === 404) throw new Error(t("api.serverOutdated"));
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || t("api.cloneFailed", { status: res.status }));
+    return data;
+  },
   async newSession(cwd) {
     const res = await fetch("/api/sessions/new", {
       method: "POST",
@@ -194,6 +225,13 @@ const el = {
   input: document.getElementById("input"),
   send: document.getElementById("send"),
   abort: document.getElementById("abort"),
+  treeBtn: document.getElementById("tree-btn"),
+  treePanel: document.getElementById("tree-panel"),
+  treeBody: document.getElementById("tree-body"),
+  treeClose: document.getElementById("tree-close"),
+  treeClone: document.getElementById("tree-clone"),
+  lightbox: document.getElementById("lightbox"),
+  lightboxImg: document.getElementById("lightbox-img"),
   attach: document.getElementById("attach"),
   file: document.getElementById("file"),
   attachments: document.getElementById("attachments"),
@@ -821,6 +859,143 @@ function skeletonHtml() {
   return `<div class="skeleton"><i></i><i></i><i></i></div>`;
 }
 
+// ---------------------------------------------------------------- branch tree
+
+/**
+ * The branch tree of the open session, as a light overlay panel.
+ *
+ * Read-mostly: the tree comes from pi's get_tree (reshaped server-side), and
+ * the two write actions map straight onto RPC commands — fork from any past
+ * user message, clone the active branch into a new session. Both refresh the
+ * transcript by re-attaching the SSE stream, which re-reads the snapshot.
+ */
+async function openTreePanel() {
+  if (!state.path) return;
+  el.treePanel.hidden = false;
+  el.treeBody.innerHTML = `<div class="settings-empty">${esc(t("tree.loading"))}</div>`;
+  try {
+    state.tree = await api.tree(state.path);
+    renderTree();
+  } catch (error) {
+    el.treeBody.innerHTML = `<div class="settings-empty">${esc(
+      error instanceof Error ? error.message : String(error),
+    )}</div>`;
+  }
+}
+
+function closeTreePanel() {
+  el.treePanel.hidden = true;
+  state.tree = null;
+}
+
+function renderTree() {
+  const view = state.tree;
+  if (!view) return;
+  if (view.nodes.length === 0) {
+    el.treeBody.innerHTML = `<div class="settings-empty">${esc(t("tree.empty"))}</div>`;
+    return;
+  }
+  el.treeBody.innerHTML = "";
+  for (const node of view.nodes) el.treeBody.appendChild(treeNodeDom(node));
+}
+
+function treeNodeDom(node) {
+  const row = document.createElement("div");
+  row.className = `tree-node ${node.kind}${node.active ? " active" : ""}`;
+  row.dataset.entryId = node.id;
+
+  const head = document.createElement("div");
+  head.className = "tree-row";
+  const who = node.kind === "user" ? t("msg.you") : node.kind === "assistant" ? "pi" : "·";
+  head.innerHTML = `<span class="tree-who">${esc(who)}</span><span class="tree-preview">${esc(
+    node.preview,
+  )}</span>`;
+  if (node.label) {
+    const chip = document.createElement("span");
+    chip.className = "tree-label";
+    chip.textContent = node.label;
+    head.appendChild(chip);
+  }
+  if (node.kind === "user") {
+    const forkButton = document.createElement("button");
+    forkButton.className = "tree-fork";
+    forkButton.type = "button";
+    forkButton.textContent = t("tree.fork");
+    forkButton.onclick = () => forkFrom(node.id, forkButton);
+    head.appendChild(forkButton);
+  }
+  row.appendChild(head);
+
+  if (node.children.length > 0) {
+    const kids = document.createElement("div");
+    kids.className = "tree-children";
+    for (const child of node.children) kids.appendChild(treeNodeDom(child));
+    row.appendChild(kids);
+  }
+  return row;
+}
+
+async function forkFrom(entryId, button) {
+  if (!state.path) return;
+  button.disabled = true;
+  try {
+    const result = await api.fork(state.path, entryId);
+    closeTreePanel();
+    if (result.cancelled) {
+      addNotice(t("tree.forkCancelled"));
+      return;
+    }
+    addNotice(t("tree.forked"));
+    // The active branch changed under us; re-attach the stream so the
+    // snapshot (and the transcript) reflect the forked branch.
+    refreshActiveSession();
+  } catch (error) {
+    button.disabled = false;
+    addNotice(t("common.error", { message: error.message }), "error");
+  }
+}
+
+async function cloneActiveSession() {
+  if (!state.path) return;
+  el.treeClone.disabled = true;
+  try {
+    const result = await api.clone(state.path);
+    closeTreePanel();
+    if (result.cancelled) {
+      addNotice(t("tree.cloneCancelled"));
+      return;
+    }
+    addNotice(t("tree.cloned"));
+    await refreshSessionList();
+    refreshActiveSession();
+  } catch (error) {
+    addNotice(t("common.error", { message: error.message }), "error");
+  } finally {
+    el.treeClone.disabled = false;
+  }
+}
+
+/** Re-attach the SSE stream of the session already selected: new snapshot. */
+function refreshActiveSession() {
+  if (!state.path) return;
+  closeStream();
+  openSessionStream({ path: state.path });
+}
+
+// ---------------------------------------------------------------- lightbox
+
+/** Full-size view for any image in the transcript (tool images stay capped
+ * inline; the click opens the real pixels without leaving the app). */
+function openLightbox(src) {
+  el.lightboxImg.src = src;
+  el.lightbox.hidden = false;
+}
+
+function closeLightbox() {
+  el.lightbox.hidden = true;
+  el.lightboxImg.src = "";
+}
+
 // ---------------------------------------------------------------- sidebar
 
 function shortPath(cwd) {
@@ -1055,11 +1230,16 @@ const STREAM_MAX_RETRIES = 3;
 
 async function openSession(session) {
   closeStream();
+  // The tree belongs to the session being opened; a panel left over from the
+  // previous one would show another session's branches.
+  closeTreePanel();
+  closeLightbox();
   state.path = session.path;
   state.cwd = session.cwd;
   el.messages.innerHTML = "";
   el.chatTitle.textContent = session.title;
   el.chatMeta.textContent = session.cwd;
+  el.treeBtn.disabled = false;
   renderFolders();
   renderSessions();
   setStatus("loading");
@@ -1901,10 +2081,11 @@ async function handleMessagesClick(event) {
     return;
   }
 
-  // Markdown images render at column width; open the full-size file on click.
-  const mdImage = event.target.closest("img.md-img-local");
-  if (mdImage) {
-    window.open(mdImage.src, "_blank", "noopener");
+  // Markdown and tool images render capped in the transcript; the click opens
+  // the full-size pixels in-app instead of a new browser tab.
+  const img = event.target.closest("#messages img");
+  if (img) {
+    openLightbox(img.src);
     return;
   }
 
@@ -3283,6 +3464,14 @@ function bind() {
   };
   el.refresh.onclick = refreshSessionList;
   el.settings.onclick = () => openSettings();
+  el.treeBtn.onclick = openTreePanel;
+  el.treeClose.onclick = closeTreePanel;
+  el.treeClone.onclick = cloneActiveSession;
+  // Click on the backdrop closes; the card stops the event from reaching it.
+  el.treePanel.addEventListener("click", (event) => {
+    if (event.target === el.treePanel) closeTreePanel();
+  });
+  el.lightbox.addEventListener("click", closeLightbox);
   el.settingsBack.onclick = closeSettings;
   el.settingsMenu.addEventListener("click", (event) => {
     const item = event.target.closest(".settings-menu");
@@ -3310,6 +3499,13 @@ function bind() {
     if (state.dialog) {
       event.preventDefault();
       answerDialog(state.dialog, { cancelled: true });
+      return;
+    }
+    // Overlays sit above the settings view in the Escape pecking order.
+    if (!el.treePanel.hidden || !el.lightbox.hidden) {
+      event.preventDefault();
+      closeTreePanel();
+      closeLightbox();
       return;
     }
     if (state.view === "settings") {
@@ -3462,6 +3658,11 @@ globalThis.piShellDebug = {
   openSettings,
   closeSettings,
   selectSettingsSection,
+  openTreePanel,
+  closeTreePanel,
+  renderTree,
+  openLightbox,
+  closeLightbox,
   setTheme,
   setLanguage,
   applyTheme,

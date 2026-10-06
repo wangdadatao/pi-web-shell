@@ -65,6 +65,7 @@
           </div>
           <div class="chat-head-actions">
             <span id="status" class="status idle"></span>
+            <button id="tree-btn" class="ghost-btn" data-i18n-title="tree.open" disabled>🌳</button>
             <button id="abort" class="ghost-btn" data-i18n="chat.stop" disabled>停止</button>
           </div>
         </header>
@@ -72,6 +73,23 @@
         <div id="messages" class="messages"></div>
 
         <div id="drop-hint" class="drop-hint hidden" data-i18n="chat.dropHint">松手即可添加图片</div>
+
+        <div id="tree-panel" class="overlay-panel" hidden>
+          <div class="overlay-card tree-card">
+            <header class="overlay-head">
+              <span data-i18n="tree.title">分支树</span>
+              <span class="overlay-head-actions">
+                <button id="tree-clone" class="ghost-btn" data-i18n="tree.clone">克隆会话</button>
+                <button id="tree-close" class="icon-btn" data-i18n-title="common.close">✕</button>
+              </span>
+            </header>
+            <div id="tree-body" class="tree-body"></div>
+          </div>
+        </div>
+
+        <div id="lightbox" class="lightbox" hidden>
+          <img id="lightbox-img" alt="" />
+        </div>
 
         <!-- Extension UI: a `setWidget` pinned above the editor, mirroring pi's
              terminal layout. `hidden` while empty so it costs no space. -->

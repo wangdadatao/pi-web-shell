@@ -667,6 +667,146 @@ body {
   cursor: default;
 }
 
+/* ---------- overlays: branch-tree panel and image lightbox ---------- */
+
+.overlay-panel {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--bg) 65%, transparent);
+  backdrop-filter: blur(3px);
+}
+
+.overlay-card {
+  display: flex;
+  flex-direction: column;
+  max-width: min(760px, calc(100vw - 48px));
+  max-height: min(78vh, 720px);
+  background: var(--bg-pane);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.overlay-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  font-size: 13.5px;
+  font-weight: 600;
+  border-bottom: 1px solid var(--border);
+}
+
+.overlay-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tree-body {
+  overflow: auto;
+  padding: 12px 14px;
+  font-size: 12.5px;
+}
+
+.tree-children {
+  margin-left: 18px;
+  padding-left: 10px;
+  border-left: 1px solid var(--border);
+}
+
+.tree-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+  min-width: 0;
+}
+
+.tree-who {
+  flex: none;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.tree-node.user .tree-who {
+  color: var(--accent, #4f8cdb);
+}
+
+.tree-preview {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+}
+
+.tree-node.active > .tree-row .tree-preview {
+  color: var(--text);
+}
+
+.tree-node.active > .tree-row {
+  box-shadow: inset 2px 0 0 var(--accent, #4f8cdb);
+  padding-left: 8px;
+}
+
+.tree-label {
+  flex: none;
+  font-size: 11px;
+  color: var(--text);
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+
+.tree-fork {
+  flex: none;
+  font: inherit;
+  font-size: 11px;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px 10px;
+  cursor: pointer;
+}
+
+.tree-fork:hover {
+  color: var(--text);
+  border-color: var(--muted);
+}
+
+.tree-fork:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.82);
+  cursor: zoom-out;
+}
+
+.lightbox img {
+  max-width: 92vw;
+  max-height: 88vh;
+  border-radius: 4px;
+}
+
 .settings-toolbar-note {
   font-size: 12px;
   color: var(--muted);

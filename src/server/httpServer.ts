@@ -11,6 +11,7 @@ import { ImageStore, isImageHash, stripInlineImages } from "./imageStore.ts";
 import { loadLocalImage } from "./localImage.ts";
 import { collectEnvironment } from "./environment.ts";
 import { SettingsValidationError, applySettingsPatch, setMcpEnabled, writeAgentsMd } from "./settingsStore.ts";
+import { reshapeTree } from "./treeView.ts";
 import { normalizeCommands } from "./commands.ts";
 import { buildUiResponse } from "./extensionUi.ts";
 import { UsageIndex } from "./usageStats.ts";
@@ -91,6 +92,38 @@ export function createApp(deps: ServerDeps): Server {
         return handleEvents(req, res, deps);
       }
 
+      if (route === "GET /api/tree") {
+        // The branch tree of the open session, reshaped light for the panel.
+        const managed = registry.get(url.searchParams.get("path") ?? "");
+        if (!managed) return sendJson(res, 404, { error: "session not open" });
+        const data = await managed.rpc.send({ type: "get_tree" });
+        return sendJson(res, 200, reshapeTree(data));
+      }
+      if (route === "POST /api/fork") {
+        const body = await readJson(req);
+        const managed = registry.get(String(body["path"] ?? ""));
+        if (!managed) return sendJson(res, 404, { error: "session not open" });
+        const entryId = String(body["entryId"] ?? "");
+        if (!entryId) return sendJson(res, 400, { error: "entryId required" });
+        const data = (await managed.rpc.send({ type: "fork", entryId })) as Record<string, unknown>;
+        return sendJson(res, 200, { ok: true, cancelled: data["cancelled"] === true, text: data["text"] ?? null });
+      }
+      if (route === "POST /api/clone") {
+        const body = await readJson(req);
+        const managed = registry.get(String(body["path"] ?? ""));
+        if (!managed) return sendJson(res, 404, { error: "session not open" });
+        const data = (await managed.rpc.send({ type: "clone" })) as Record<string, unknown>;
+        if (data["cancelled"] === true) return sendJson(res, 200, { ok: true, cancelled: true, sessionFile: null });
+        // clone does not say where the copy landed; the subprocess knows.
+        const state = await getState(managed.rpc);
+        const sessionFile = typeof state["sessionFile"] === "string" ? state["sessionFile"] : null;
+        // After a clone the subprocess may have switched files; drop it so the
+        // next acquire respawns on the session this tab actually shows.
+        if (sessionFile && normalizeSessionKey(sessionFile) !== managed.path) {
+          await registry.dispose(managed.path);
+        }
+        return sendJson(res, 200, { ok: true, cancelled: false, sessionFile });
+      }
       if (route === "POST /api/prompt") {
         return handlePrompt(req, res, deps);
       }

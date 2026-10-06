@@ -33,12 +33,16 @@ const MESSAGES = {
     "api.saveSettingsFailed": "保存设置失败: {status}",
     "api.agentsMdFailed": "保存 AGENTS.md 失败: {status}",
     "api.mcpFailed": "更新 MCP 状态失败: {status}",
+    "api.treeFailed": "读取分支树失败: {status}",
+    "api.forkFailed": "分叉失败: {status}",
+    "api.cloneFailed": "克隆失败: {status}",
     "api.newSessionFailed": "新建会话失败: {status}",
     "api.renameFailed": "重命名失败: {status}",
     "api.deleteFailed": "删除失败: {status}",
 
     /* ---------- shared ---------- */
     "common.copy": "复制",
+    "common.close": "关闭",
     "common.copied": "已复制",
     "common.copyFailed": "复制失败",
     "common.copyCode": "复制代码",
@@ -66,6 +70,17 @@ const MESSAGES = {
 
     /* ---------- markdown / mermaid ---------- */
     "mermaid.rendering": "渲染图表中…",
+
+    "tree.open": "分支树（fork / 克隆）",
+    "tree.title": "分支树",
+    "tree.clone": "克隆会话",
+    "tree.loading": "读取分支树…",
+    "tree.empty": "这个会话还没有任何条目。",
+    "tree.fork": "从这里分叉",
+    "tree.forked": "已分叉到新分支，对话已切换。",
+    "tree.forkCancelled": "分叉被扩展取消了。",
+    "tree.cloned": "已克隆为新会话，左侧列表可见。",
+    "tree.cloneCancelled": "克隆被扩展取消了。",
     "mermaid.notLoaded": "mermaid 未加载",
     "mermaid.failed": "图表渲染失败：{message}",
 
@@ -346,12 +361,16 @@ const MESSAGES = {
     "api.saveSettingsFailed": "Failed to save settings: {status}",
     "api.agentsMdFailed": "Failed to save AGENTS.md: {status}",
     "api.mcpFailed": "Failed to update MCP state: {status}",
+    "api.treeFailed": "Failed to load the branch tree: {status}",
+    "api.forkFailed": "Fork failed: {status}",
+    "api.cloneFailed": "Clone failed: {status}",
     "api.newSessionFailed": "Failed to create session: {status}",
     "api.renameFailed": "Rename failed: {status}",
     "api.deleteFailed": "Delete failed: {status}",
 
     /* ---------- shared ---------- */
     "common.copy": "Copy",
+    "common.close": "Close",
     "common.copied": "Copied",
     "common.copyFailed": "Copy failed",
     "common.copyCode": "Copy code",
@@ -379,6 +398,17 @@ const MESSAGES = {
 
     /* ---------- markdown / mermaid ---------- */
     "mermaid.rendering": "Rendering diagram…",
+
+    "tree.open": "Branch tree (fork / clone)",
+    "tree.title": "Branch tree",
+    "tree.clone": "Clone session",
+    "tree.loading": "Loading the branch tree…",
+    "tree.empty": "This session has no entries yet.",
+    "tree.fork": "Fork here",
+    "tree.forked": "Forked to a new branch; the transcript switched to it.",
+    "tree.forkCancelled": "The fork was canceled by an extension.",
+    "tree.cloned": "Cloned into a new session; see the sidebar.",
+    "tree.cloneCancelled": "The clone was canceled by an extension.",
     "mermaid.notLoaded": "mermaid is not loaded",
     "mermaid.failed": "Diagram failed to render: {message}",
 

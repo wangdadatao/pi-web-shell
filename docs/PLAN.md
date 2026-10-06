@@ -200,7 +200,7 @@
 
 - [x] Web 会话注入端专属规则：spawn 时统一带 `--append-system-prompt`（仅 web 子进程携带，CLI 不受影响），告知「本地图片用 ![描述](/绝对/路径.png) 内联」；同时把上一条补在 image-gen SKILL.md 里的展示规则撤回，单一事实源随代码走 — 验证：隔离环境新会话问「展示 dog.png」，模型主动回 `![dog.png](/绝对路径)`；会话文件 system 消息含注入文本（resume 会重放）；浏览器渲染为 /api/local-image 且真实解码；typecheck + 单测 31/31
 - [x] pi 发图：模型不能附图，改为正文 Markdown 引用本地图（`![alt](/abs/path.png)`、`file://`、`~/` 三种写法），新增 `GET /api/local-image` 代理——魔数嗅探只放行 PNG/JPEG/GIF/WEBP（不是任意文件读接口），ETag+mtime 缓存 — 验证：单测 31/31（sniff/扩展名伪装/相对路径 400/缺失 404）；curl 端到端（200+字节一致、txt 与 /etc/passwd 均 415、If-None-Match 304、URL 编码路径）；CDP 断言三种写法均重写为 `/api/local-image?path=`、外链不动、`md-img-local` 穿过 DOMPurify、图片在页面内真实解码（naturalWidth=1）
-- [ ] 分支树可视化（`get_tree` / `fork` / `clone`）
+- [x] 分支树可视化（`get_tree` / `fork` / `clone`）— 已交付 M2.15（只读树+分叉+克隆+活动分支高亮；label 编辑与节点预览为二期）
 - [x] 把 UI 断言固定成 `npm run ui:test`（当初靠 `npm run shot ... --eval` 手跑）— 已固化：`scripts/ui-test.ts` 一条命令跑 typecheck + 单测 + 全部 `ui-test-*.ts`（共享一个隔离服务端；脚本约定：首参为 base URL 则不自举）— 验证：`npm run ui:test` 全绿
 - [ ] 多会话同屏 / 标签页
 - [ ] 工具图点击放大（现在最大 320px）
@@ -438,3 +438,24 @@ UI 断言有 5 个脚本但要逐个手跑。
   顺手修了 UI 测试里 agentDir 种子写错文件的测试 bug
 - [x] i18n 新增 11 词条中英对齐（279/278+locale 名）；CSS 补 textarea/开关样式
 - 回归：typecheck 干净；单测 75/75；`npm run ui:test` 全绿（settings-edit 扩到 28 断言）
+
+## M2.15 分支树面板 + 图片 lightbox（2026-10-04）
+
+官方 next：会话是 append-only 的树，但 web 上既看不到分支也没法 fork/clone。
+第一期做只读树 + 两个动作；label 编辑、节点跳转预览留给二期。
+
+- [x] 服务端三端点：`GET /api/tree` 代理 get_tree 并重塑（treeView.ts：entry 瘦身为
+  id/kind/preview(≤120字)/label，用 leafId+parentId 走出活动路径并打标）；`POST /api/fork`
+  转发 fork(entryId)；`POST /api/clone` 转发 clone——clone 不回新文件路径，补一发 get_state
+  拿 sessionFile，若子进程已切文件则 dispose 该会话防漂移 — 验证：treeView 单测 5 例
+  （活动路径不按兄弟顺序、多 root、label/截断/非消息条目、leafId=null、垃圾输入）
+- [x] 前端树面板：chat 头 🌳 按钮（随会话开关启停）→ 遮罩卡片；用户消息节点挂「从这里分叉」，
+  活动分支左侧高亮线，label 渲染成胶囊；fork/clone 后关闭面板、重挂 SSE 流拿新快照、
+  克隆后刷新会话列表；Esc/点遮罩关闭（Escape 顺序：对话框 > 遮罩 > 设置页）
+- [x] 图片 lightbox（顺手项）：#messages 里任意图片点击改为应用内全尺寸查看（原来 md 本地图
+  是开新标签页、工具图 320px 不可放大），Esc/点击关闭 — 验证：ui-test-tree 15 断言
+  （渲染计数/用户节点 fork 按钮/高亮 4 节点/label 胶囊/fork 提交 entryId+面板关闭+提示/
+  clone 一次+提示/Esc 与遮罩关闭/lightbox 开与关/无页面异常；接口在页面内 stub，
+  服务端重塑由单测覆盖）
+- [x] i18n 新增 12 词条中英对齐（293/292+locale 名）；CSS：overlay 面板/树节点/lightbox
+- 回归：typecheck 干净；单测 80/80；`npm run ui:test` 7 个脚本全绿
