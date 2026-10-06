@@ -166,7 +166,7 @@ const MESSAGES = {
     "settings.loadingSlow": "正在读取…（首次统计要扫一遍会话文件，可能要一秒）",
     "settings.loadFailed": "读取失败：{message}",
     "settings.noData": "没有数据。",
-    "settings.note.readonly": "这里的值都是只读的：pi 在子进程启动时读一次配置，改文件不会影响已打开的会话。",
+    "settings.note.readonly": "技能与资源路径只列出、不能在这里改；MCP 开关会写回 mcp.json 并回收已打开的会话，它们重连后按新配置启动。",
     "settings.note.mcpNoConnect": "MCP 只列出 mcp.json 里的配置，不建立连接；要看连接状态和工具列表，跑 pi mcp list。",
     "settings.planned": "计划中",
     "settings.plannedNote": "都还没实现，先记在这里：",
@@ -255,7 +255,7 @@ const MESSAGES = {
 
     /* ---------- settings: resources ---------- */
     "resources.title": "技能 / MCP / 插件",
-    "resources.lead": "pi 启动会话时实际会加载的东西，读自 {dir}。只做了清单：启用/禁用、安装/卸载还没实现。",
+    "resources.lead": "pi 启动会话时实际会加载的东西，读自 {dir}。技能与资源路径只是清单；MCP 可直接启用/禁用，安装/卸载还没实现。",
     "resources.skills": "技能（{count}）",
     "resources.mcp": "MCP server（{count}）",
     "resources.paths": "settings.json 里的资源路径",
@@ -334,7 +334,6 @@ const MESSAGES = {
     "agent.idle": "空闲回收",
     "agent.minutes": "{count} 分钟",
     "agent.agentDir": "agent 目录",
-    "agent.plan.2": "编辑 AGENTS.md（全局指令）",
     "agent.plan.3": "项目级 .pi/settings.json 的两级作用域",
 
     /* ---------- prompts / confirms ---------- */
@@ -495,7 +494,7 @@ const MESSAGES = {
     "settings.loadingSlow": "Loading… (the first run scans every session file, this can take a second)",
     "settings.loadFailed": "Load failed: {message}",
     "settings.noData": "No data.",
-    "settings.note.readonly": "Everything here is read-only: pi reads its config once, when a subprocess starts, so editing a file does not affect sessions that are already open.",
+    "settings.note.readonly": "Skills and resource paths are listed only. The MCP toggles write back to mcp.json and recycle open sessions, which restart with the new config when they reconnect.",
     "settings.note.mcpNoConnect": "MCP is listed from mcp.json without connecting; for live state and tool lists, run pi mcp list.",
     "settings.planned": "Planned",
     "settings.plannedNote": "Not implemented yet — recorded here so it is not forgotten:",
@@ -584,7 +583,7 @@ const MESSAGES = {
 
     /* ---------- settings: resources ---------- */
     "resources.title": "Skills / MCP / packages",
-    "resources.lead": "What pi loads when it starts a session, read from {dir}. Read-only: enabling, disabling, installing are not implemented.",
+    "resources.lead": "What pi loads when it starts a session, read from {dir}. Skills and resource paths are listed only; MCP servers can be toggled, while installing/removing is not implemented.",
     "resources.skills": "Skills ({count})",
     "resources.mcp": "MCP servers ({count})",
     "resources.paths": "Resource paths in settings.json",
@@ -663,7 +662,6 @@ const MESSAGES = {
     "agent.idle": "Idle timeout",
     "agent.minutes": "{count} min",
     "agent.agentDir": "Agent directory",
-    "agent.plan.2": "Edit AGENTS.md (global instructions)",
     "agent.plan.3": "Two-level scope: project .pi/settings.json on top of the user file",
 
     /* ---------- prompts / confirms ---------- */

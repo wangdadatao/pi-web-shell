@@ -3154,7 +3154,7 @@ function renderAgentSection(env) {
       ]),
     )}
     ${section(t("settings.editTitle"), settingsForm(env, AGENT_SETTING_KEYS))}
-    ${planned([t("agent.plan.2"), t("agent.plan.3")])}`;
+    ${planned([t("agent.plan.3")])}`;
 }
 
 /* ---------- editable settings.json (whitelisted keys, server-validated) ---------- */

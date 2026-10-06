@@ -183,7 +183,8 @@ export function createApp(deps: ServerDeps): Server {
         return handleCommands(res, url, deps);
       }
 
-      // Settings page. Both are read-only: nothing here writes a config file.
+      // Settings page: the two read endpoints below, plus the write endpoints
+      // further down (settings.json / AGENTS.md / mcp.json).
       // Titles come from the session index so usage rows read like the sidebar.
       if (route === "GET /api/settings/usage") {
         const titles = new Map((await index.listSessions()).map((s) => [s.path, s.title]));

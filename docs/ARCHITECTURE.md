@@ -106,19 +106,31 @@ pi 只有在第一条消息时才会把会话写盘。所以新建会话后 `get
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/api/sessions` | `{ home, folders, sessions }`，只包含有会话的文件夹 |
+| GET | `/api/sessions` | `{ home, folders, sessions }`，只包含有会话的文件夹；每条带 `running`（运行态）与 `pending`（文件未落盘） |
 | POST | `/api/sessions/new` | `{ cwd }` → 在该目录启动新会话，返回 `{ path, cwd, state }` |
+| POST | `/api/rename` | `{ path, name }` → `set_session_name`；未打开的会话先 acquire 一次、写完归还 |
+| POST | `/api/delete` | `{ path }` → 会话文件进废纸篓（没有 `trash` 就 unlink），删前先 dispose 活跃子进程 |
+| POST | `/api/delete-folder` | `{ cwd }` → 删除该目录下全部会话文件（并行），不碰目录本身与其他文件 |
 | GET | `/api/stream?path=<file>` | SSE：先发 `snapshot`（state + messages + stats），后转发实时事件。响应 gzip |
 | GET | `/api/events` | SSE：全局会话运行态。每帧 `{type:"activity", path, running}`，连接时先补发当前运行中的会话。与具体会话无关，所以能在没打开该会话时也能收到 |
-| GET | `/api/image/<sha1>` | 图片字节，内容寻址 + `immutable` 缓存 |
+| GET | `/api/tree?path=<file>` | 代理 `get_tree`，再经 `treeView.ts` 瘦身成面板要的 `{ nodes, leafId }`（只有 id/kind/preview/label/active） |
+| POST | `/api/fork` | `{ path, entryId }` → `fork`；返回 `{ ok, cancelled, text }` |
+| POST | `/api/clone` | `{ path }` → `clone`，再 `get_state` 补回副本路径；子进程若切了文件就 dispose 它防漂移 |
+| GET | `/api/image/<sha1>` | 快照里的图片字节，内容寻址 + `immutable` 缓存 |
+| GET | `/api/local-image?path=<abs>` | 正文 Markdown 引用的本地图；魔数嗅探只放行 PNG/JPEG/GIF/WEBP，ETag 用 size+mtime |
 | POST | `/api/prompt` | `{ path, message, images? }`，流式中自动用 `followUp` |
+| POST | `/api/ui-response` | 回填扩展 UI 请求（`extension_ui_request`）的答案 |
 | POST | `/api/abort` | `{ path }` |
 | POST | `/api/model` | `{ path, provider, modelId }` → `set_model` |
 | POST | `/api/thinking` | `{ path, level }` → `set_thinking_level` |
 | GET | `/api/models?path=<file>` | `{ models, model, thinkingLevels, thinkingLevel }`；需要该会话的子进程在线，客户端在 `snapshot` 后调用 |
+| GET | `/api/commands?path=<file>` | `get_commands` 精简后的命令表，供 `/` 菜单用 |
 | GET | `/api/settings/usage` | 全部会话的 token / 花费汇总（只读，见下） |
-| GET | `/api/settings/environment` | pi 会加载什么 + 本服务运行参数（只读，见下） |
-| GET | `/` | 静态前端（`src/web`） |
+| GET | `/api/settings/environment` | pi 会加载什么 + 可写白名单 + 本服务运行参数（见下） |
+| POST | `/api/settings/save` | 白名单补丁 `{点分键: 值|null}`；校验失败 400，写成功后 `disposeAll()` |
+| POST | `/api/settings/agents-md` | `{ content }` → 重写 AGENTS.md（备份 + 原子写），之后 `disposeAll()` |
+| POST | `/api/settings/mcp` | `{ name, enabled }` → 按 pi 的写法改 mcp.json 条目的 `enabled`，之后 `disposeAll()` |
+| GET | `/` | 静态前端（`src/web`）；`/settings` 回落到同一个 `index.html`，其他路径不回落（打错的资源仍 404） |
 
 SSE 帧格式：`snapshot` | `event`（pi 原始事件） | `stats`（`get_session_stats` 结果） | `error`。
 `stats` 在开流时随 `snapshot` 一起下发，并在每次 `agent_settled` 后重新推送，
@@ -140,9 +152,14 @@ SSE 帧格式：`snapshot` | `event`（pi 原始事件） | `stats`（`get_sessi
 
 ## 安全
 
-- 默认只绑 `127.0.0.1`。
+- 默认只绑 `127.0.0.1`，并校验 `Host` 头（只放行 loopback 名字），挡 DNS rebinding ——
+  见 `src/server/hostCheck.ts`。绑到非 loopback 时视为显式放弃本地模型，跳过这项检查。
 - `/api/stream` 与静态文件都做路径包含校验，session 路径必须在配置的
   sessions 目录内且以 `.jsonl` 结尾。
+- `/api/local-image` **不是通用文件读接口**：路径必须绝对存在，且类型由**魔数**决定、
+  不看扩展名，只有真的 PNG/JPEG/GIF/WEBP 字节能离开进程；单文件上限 64MB。
+- 设置页的写路径不收整份 JSON：只认白名单里的扁平 `{点分键: 值|null}` 补丁，逐值做类型/范围校验，
+  白名单外的键原样保留（见下「设置页」）。
 - 不引入任何运行时依赖（只用 Node 内置模块），减少升级面。
 
 ## 前端第三方库
@@ -225,23 +242,33 @@ npm run theme:check
 ```
 src/shared/types.ts        wire 类型（服务端与前端共享的定义）
 src/server/config.ts       环境变量配置
+src/server/index.ts        入口：启动 + 开浏览器 + 信号处理
+src/server/httpServer.ts   HTTP 路由、SSE、静态文件
 src/server/sessionIndex.ts 扫描/缓存会话，按 cwd 分组
+src/server/sessionRegistry.ts  子进程生命周期与引用计数
+src/server/piSession.ts    单个 pi RPC 子进程：JSONL 编解码、请求/响应关联、事件分发
+src/server/paths.ts        会话路径归一（realpath 到最深存在祖先，pending 键落盘前后一致）
+src/server/hostCheck.ts    Host 头校验（DNS rebinding）
+src/server/commands.ts     get_commands 结果瘦身
+src/server/extensionUi.ts  扩展 UI 请求/状态（对话框、状态行、widget），含快照重放
+src/server/imageStore.ts   快照里图片字节的内容寻址缓存（LRU）
+src/server/localImage.ts   /api/local-image 的魔数嗅探与读取
+src/server/treeView.ts     get_tree 结果重塑成分支树面板的 payload
+src/server/settingsStore.ts  settings.json / AGENTS.md / mcp.json 的白名单写路径
 src/server/usageStats.ts   跨会话 token / 花费统计（按 mtime+size 缓存）
 src/server/environment.ts  只读地读 pi 的配置、skills、mcp.json
-src/server/piSession.ts    单个 pi RPC 子进程：JSONL 编解码、请求/响应关联、事件分发
-src/server/sessionRegistry.ts  子进程生命周期与引用计数
-src/server/httpServer.ts   HTTP 路由、SSE、静态文件
-src/server/index.ts        入口：启动 + 开浏览器 + 信号处理
 src/web/                   无构建步骤的前端（HTML/CSS/JS）
 src/web/i18n.js            外壳文案字典（zh-CN / en，含 data-i18n 填充）
 src/web/vendor/            vendored 的 marked / DOMPurify / Prism / Mermaid
+test/*.test.ts             node:test 单测（单测与编排见 package.json）
 scripts/plan.ts            读 docs/PLAN.md 打印进度与下一项
 scripts/screenshot.ts      CDP 截图 + 断言（普通 --screenshot 会被 SSE 长连接卡住）
 scripts/theme.ts           与 pi 主题逐项比对配色是否漂移
 scripts/vendor.ts          拷贝前端第三方库
-scripts/ui-test-sidebar.ts 侧栏折叠的 CDP 断言
-scripts/ui-test-mermaid.ts mermaid 图表渲染的 CDP 断言（含标签转义、失败降级、幂等）
-scripts/ui-test-token-speed.ts 输出速度口径的 CDP 断言（计时起点、按消息重置、工具轮）
+scripts/launchd.ts         LaunchAgent 安装/卸载/状态/重启
+scripts/ui-test.ts         ui:test 总入口：typecheck + 单测 + 全部 ui-test-*.ts
+scripts/ui-test-*.ts       各功能的 CDP 断言（侧栏/mermaid/token 速度/滚动/设置页路由/
+                           设置页写操作/分支树），一套隔离服务端共用
 ```
 
 ## 前端渲染模型
@@ -260,6 +287,40 @@ scripts/ui-test-token-speed.ts 输出速度口径的 CDP 断言（计时起点�
 `toolResult.toolCallId` 做匹配，效果一致。
 
 实时渲染时活动块保持展开（能看到进展），`agent_settled` 后折叠。
+
+## 分支树面板
+
+pi 的会话是 append-only 的树：每条 entry 带 `parentId`，当前叶子是 `leafId`（`get_tree`）。
+面板只需要「谁在说话 + 一行预览 + 在不在当前分支」，所以服务端 `treeView.ts` 先瘦身：
+丢掉完整消息内容与工具结果，只留 `id / kind / preview(≤ 120 字) / label / active`。
+
+`active` 是**算出来的**，不是读出来的：从 `leafId` 沿 `parentId` 往上走到 root，
+路上的节点进集合。当前在哪条分支只由 `leafId` 决定，跟同一层兄弟节点的先后顺序无关。
+
+前端布局（M2.16 重做，之前每轮缩进一层，线性会话成了长楼梯）：活动 root→leaf 链平铺成
+主干（顶格，每行 = 一条用户消息 + 其后的回复，回复折到行下第二行）；每个岔路收成一个默认
+折叠的「⑂ 分支 · N 条 · 预览」胶囊，展开后按同样规则递归（分支内部没有 active 标记，
+以首子链代替主干）。展开态存在 `state.treeExpanded`，重渲染不丢。
+
+两个动作直接转发官方 RPC：`fork(entryId)`（从某条用户消息分叉）与 `clone`（复制整条会话）。
+`clone` 不回新文件路径，所以补一发 `get_state` 去拿；若子进程已经切到了副本文件，
+就把它 dispose 掉——否则「标签页显示的会话」与「子进程正在写的文件」会分叉。
+
+图片查看是顺手加的同层交互：`#messages` 里任意图片（正文本地图、工具截图占位符）点击都
+在应用内 lightbox 打开全图，Esc 或点遮罩关闭，不再依赖开新标签页。
+
+## 扩展 UI
+
+pi 扩展可以通过 `extension_ui_request` 向宿主弹对话框（`select` / `confirm` / `input` / `editor`），
+或设置状态行、编辑器上/下方的 widget 与标题。这不是 TUI 专属能力，所以外壳接住它：
+
+- **有状态的部分**（`setStatus` / `setWidget` / `setTitle`）由 `extensionUi.ts` 折叠进每个子进程
+  常驻的 `managed.ui`；省略 payload 即撤回该键（这就是扩展的清理方式）。快照帧带 `ui` 字段，
+  所以刷新 / 重连后状态能重放，不会只剩对话框。
+- **一次性的对话框**以原始事件推给前端，在页面上真实渲染成表单；提交走 `POST /api/ui-response`，
+  由 `buildUiResponse` 塑形回 `extension_ui_response` —— `cancelled` 优先于值（不能既回答又取消），
+  `confirm` 是布尔、`select` / `input` / `editor` 是字符串，其他一律拒绝而不是猜。
+- 这些规则都是纯函数放在 `extensionUi.ts`，不用 spawn pi 就能单测。
 
 ## 统计条
 
@@ -307,22 +368,38 @@ scripts/ui-test-token-speed.ts 输出速度口径的 CDP 断言（计时起点�
 文件夹栏左下角的「⚙ 设置」进入一个独立视图（`#app[data-view="settings"]` 把三个 pane 隐藏掉，
 由 `#settings-view` 自己占满窗口），布局是左菜单 + 右内容，Esc 返回。
 
-菜单五项，只有前两项是真的，其余是占位：
+菜单五项（按页面顺序）：
 
 | 菜单 | 状态 | 数据来源 |
 |---|---|---|
-| 语言、主题 | ✅ 可切换 | 外壳自己的偏好，存 localStorage；浅色配色是从 pi 的 light 主题取色后写死的（见下） |
 | token 统计 | ✅ 只读 | `usageStats.ts`：扫 session jsonl 里每条 assistant 消息的 `usage`；按天 / 模型 / 项目 / 会话汇总，带 GitHub 式每日热力图与模型筛选 |
-| 技能 / MCP / 插件 | ✅ 只读 | `environment.ts`：扫 agent 目录的 `skills/`、读 `settings.json` / `mcp.json` |
-| 模型配置 | 只读 + 计划 | `settings.json` 的默认值、文件状态；写还没做 |
-| agent 设置 | 只读 + 计划 | 同上 |
+| 技能 / MCP / 插件 | 清单只读，MCP 可开关 | `environment.ts`：扫 agent 目录的 `skills/`、读 `settings.json` / `mcp.json`；MCP 的启用/禁用写回 `mcp.json` |
+| 模型配置 | ✅ 可写（白名单） | `settings.json` 的默认值、文件状态，以及三个可编辑键 |
+| 语言、主题 | ✅ 可切换 | 外壳自己的偏好，存 localStorage；浅色配色是从 pi 的 light 主题取色后写死的（见下） |
+| agent 设置 | ✅ 可写（白名单） | 同模型页，外加 AGENTS.md 编辑器 |
 
 两条刻意的取舍：
 
-- **不碰 pi 的子进程**。token 统计从会话文件里算，skills / MCP 从配置文件里读，
+- **读的部分不碰 pi 的子进程**。token 统计从会话文件里算，skills / MCP 从配置文件里读，
   所以没有打开任何会话时这个页面也能用。也因此不跑 `pi mcp list`（它会真的去连 server、
   可能拉起 `npx` 或弹 OAuth），代价是看不到连接状态，页面会直说。
-- **只读的就直说只读**。没实现的项不摆假控件，而是明写「计划中」+ 打算怎么做。
+- **没实现的就直说没实现**（「计划中」+ 打算怎么做），不摆假控件。
+
+### 写路径
+
+写盘纪律只有一条：**浏览器永远不发一份要照抄的 JSON**。
+
+- `POST /api/settings/save` 收的是扁平 `{ "点分键": 值 | null }`，键必须落在服务端的
+  白名单（`EDITABLE_KEYS`，17 个对 web 有意义的键）里，逐值做类型与范围校验；
+  `null` / 空串 = 删键、回退 pi 内置默认。嵌套键（`compaction.modelOverrides`、
+  `retry.provider` 这类兄弟键）与 theme/packages 等白名单外的键**原样保留**。
+- TUI 专属键（`theme`、`tuiMode`、`fullscreen*`、`terminal.*`）刻意不进页面——那是 pi TUI 的事。
+- 每次写入先备份 `*.bak`（存改前的字节），再 `tmp` + `rename` 原子替换：
+  中途崩掉不会留下半个文件。文件存在但 JSON 解析失败时**拒绝覆写**，不当成「文件不存在」继续。
+- AGENTS.md 与 mcp.json 走同一条 `backupAndWrite`。MCP 按 pi 自己的写法：禁用写
+  `enabled: false`（保留条目不连接），启用则删掉该键（缺省即启用）。
+- **写完 `registry.disposeAll()`**：pi 每个子进程只在启动时读一次配置，不回收的话页面改了
+  但跑着的会话还是旧配置。打开的流走 SSE 自愈路径重连，新子进程即读新配置。
 
 为什么 token 统计要自己扫文件：pi 只有 `get_session_stats`（单会话、且需要子进程在线），
 没有任何跨会话的用量存储。而每条 assistant 消息都带着 provider 报的 token 与花费，
@@ -342,9 +419,6 @@ scripts/ui-test-token-speed.ts 输出速度口径的 CDP 断言（计时起点�
   `日期+周几 / 总 token / 输入·输出（含思考）/ 缓存读写 / 花费·调用次数`，
   而不是原生 `title`：后者有约 1s 延迟、样式不可控，也显示不了多行拆分。
   事件用委托 + `relatedTarget` 判相邻格子，避免在格子间滑动时闪烁；滚动或退出设置页时隐藏。
-
-`/api/settings/*` 都是只读的；等要做可写的设置（模型、agent 设置）时，
-才需要引入「原子写 + 备份 + 保留未知键」和「改完 dispose 相关子进程」这两件事。
 
 ## 主题与语言
 

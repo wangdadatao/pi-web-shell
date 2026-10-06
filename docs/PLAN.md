@@ -516,3 +516,25 @@ M2.17 的监控栏实测后删除。用户结论：展示的东西没有价值�
 - 保留：computed-display 断言升级（watch/tree 测试里防「hidden 属性失效」的那套，
   已并入 tree 测试继续生效）；「多会话同屏」待办改为记录结论
 - 回归：typecheck 干净；单测 80/80；npm run ui:test 8 个脚本全绿
+
+## M2.19 文档对齐（2026-10-06）
+
+问题：README / ARCHITECTURE 停在 M2.12 前后，M2.13–M2.16 的写操作、分支树、lightbox
+一条没写进去；设置页自己的文案还留着两处已完成的「计划中」（agent 页的 AGENTS.md、
+resources 页的「只读」脚注与「启用/禁用还没实现」）。
+
+- [x] README 功能清单对齐：补会话改名/删除、分支树（fork/clone）、图片 lightbox、`/` 命令菜单
+  与扩展 UI、模型与思考等级下拉；统计条从「顶部」改正为「底部」；设置页的「模型配置 / agent 设置」
+  从「只读 + 计划中」改为真实写路径；resources 页的 MCP 标注为可启用/禁用 — 验证：逐条对照
+  `src/web/index.html` 与 `app.js` 里的实际控件
+- [x] ARCHITECTURE 对齐：`/api` 表从 13 行补到 26 行（补 rename / delete / delete-folder、
+  tree / fork / clone、local-image、ui-response、commands 与三个 settings 写端点，并修正
+  `/settings` 回落说明）；安全节补 Host 校验与 local-image 魔数嗅探；代码地图补 10 个 server 文件、
+  `test/` 与全部 `ui-test-*.ts`；设置页一节重写为「清单 + 写路径」（白名单补丁、备份 + 原子写、
+  坏 JSON 拒写、写完 `disposeAll()`，菜单表顺序改回与页面一致）；新增「分支树面板」「扩展 UI」
+  两节 — 验证：表内每行都能在 `httpServer.ts` 找到对应 route，菜单表与 `index.html` 顺序一致
+- [x] UI 文案修正：`agent.plan.2`（编辑 AGENTS.md）已实现，从计划列表与字典移除；
+  `resources.lead`、`settings.note.readonly` 不再声称只读；`index.html` 里两处过时的兜底副标题
+  （模型「只读」/ agent「只读 + 计划中」）同步 — 验证：中英字典 292/292 对齐、无 `agent.plan.2` 残留
+- [x] 顺手修 `httpServer.ts` 里「Settings page. Both are read-only」的过时注释
+- 回归：typecheck 干净；单测 80/80；`npm run ui:test` 8 个脚本全绿
