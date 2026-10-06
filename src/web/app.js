@@ -232,12 +232,6 @@ const el = {
   treeClone: document.getElementById("tree-clone"),
   lightbox: document.getElementById("lightbox"),
   lightboxImg: document.getElementById("lightbox-img"),
-  watchPanel: document.getElementById("watch-panel"),
-  watchStatus: document.getElementById("watch-status"),
-  watchTitle: document.getElementById("watch-title"),
-  watchMeta: document.getElementById("watch-meta"),
-  watchClose: document.getElementById("watch-close"),
-  watchMessages: document.getElementById("watch-messages"),
   attach: document.getElementById("attach"),
   file: document.getElementById("file"),
   attachments: document.getElementById("attachments"),
@@ -1092,197 +1086,6 @@ function closeLightbox() {
   el.lightboxImg.src = "";
 }
 
-// ---------------------------------------------------------------- watch panel
-
-/**
- * Read-only live tail of a second session, pinned to the right of the chat.
- *
- * It owns its own /api/stream connection (the server's registry counts refs,
- * so the watched session keeps its subprocess while watched and reaps it via
- * the idle timeout after the panel closes). One line per message or tool
- * call; assistant replies stream their preview into the current line.
- */
-function startWatch(session) {
-  stopWatch();
-  state.watch = { path: session.path, title: session.title, cwd: session.cwd, stream: null, retries: 0, ended: false };
-  el.watchPanel.hidden = false;
-  el.watchTitle.textContent = session.title;
-  el.watchMeta.textContent = shortPath(session.cwd);
-  el.watchMessages.innerHTML = `<div class="watch-line notice">${esc(t("watch.connecting"))}</div>`;
-  setWatchStatus("loading");
-  openWatchStream();
-  renderSessions();
-}
-
-function stopWatch() {
-  const watch = state.watch;
-  if (!watch) return;
-  watch.ended = true; // first, so onerror does not schedule a retry
-  watch.stream?.close();
-  state.watch = null;
-  el.watchPanel.hidden = true;
-  renderSessions();
-}
-
-function setWatchStatus(kind) {
-  el.watchStatus.className = `status ${kind}`;
-}
-
-function openWatchStream() {
-  const watch = state.watch;
-  if (!watch) return;
-  const stream = new EventSource(`/api/stream?path=${encodeURIComponent(watch.path)}`);
-  watch.stream = stream;
-  stream.onopen = () => {
-    if (!state.watch) return;
-    state.watch.retries = 0;
-  };
-  stream.onmessage = (event) => {
-    let frame;
-    try {
-      frame = JSON.parse(event.data);
-    } catch {
-      return;
-    }
-    if (frame.type === "snapshot") watchSnapshot(frame);
-    else if (frame.type === "event") watchEvent(frame.event);
-    else if (frame.type === "error") watchGaveUp(frame.error ?? "stream error");
-  };
-  stream.onerror = () => watchRetry(stream);
-}
-
-/** Same re-attach policy as the main stream: a few retries, then give up. */
-function watchRetry(stream) {
-  const watch = state.watch;
-  if (!watch || watch.ended || watch.stream !== stream) return;
-  if (watch.retries >= STREAM_MAX_RETRIES) {
-    watchGaveUp(t("watch.disconnected"));
-    return;
-  }
-  watch.retries += 1;
-  stream.close();
-  setTimeout(
-    () => {
-      if (state.watch === watch && !watch.ended) openWatchStream();
-    },
-    500 * 2 ** (watch.retries - 1),
-  );
-}
-
-function watchGaveUp(message) {
-  const watch = state.watch;
-  if (!watch) return;
-  watch.ended = true;
-  watch.stream?.close();
-  setWatchStatus("idle");
-  addWatchLine(String(message), "notice");
-}
-
-function watchSnapshot(frame) {
-  el.watchMessages.innerHTML = "";
-  const messages = (frame.messages || []).filter((msg) => msg && msg.role !== "system");
-  for (const msg of messages.slice(-40)) {
-    if (msg.role === "user") addWatchLine(`${t("msg.you")} · ${watchText(msg.content)}`, "user");
-    else if (msg.role === "assistant") addWatchLine(`pi · ${watchText(msg.content)}`);
-    else if (msg.role === "toolResult") addWatchLine(`🔧 ${msg.toolName || "tool"}`, "tool");
-  }
-  if (messages.length === 0) addWatchLine(t("tree.empty"), "notice");
-  setWatchStatus(frame.state && frame.state.isStreaming ? "live" : "idle");
-}
-
-function watchEvent(event) {
-  if (!event || !state.watch) return;
-  switch (event.type) {
-    case "agent_start":
-      setWatchStatus("live");
-      break;
-    case "agent_settled":
-      setWatchStatus("idle");
-      break;
-    case "message_end":
-      if (!event.message) break;
-      if (event.message.role === "user") addWatchLine(`${t("msg.you")} · ${watchText(event.message.content)}`, "user");
-      else if (event.message.role === "assistant") finishWatchAssistant(watchText(event.message.content));
-      break;
-    case "message_update": {
-      const delta = event.assistantMessageEvent;
-      if (delta?.type === "text_delta" && delta.delta) streamWatchAssistant(delta.delta);
-      break;
-    }
-    case "tool_execution_start":
-      addWatchLine(`🔧 ${event.toolName || "tool"}`, "tool");
-      break;
-    case "session_info_changed":
-      if (event.name) {
-        state.watch.title = event.name;
-        el.watchTitle.textContent = event.name;
-      }
-      break;
-    default:
-      break;
-  }
-}
-
-/** The assistant line currently streaming, if any. It is looked up, not
- * assumed to be last: tool lines may be appended mid-reply. */
-function watchTail() {
-  return el.watchMessages.querySelector(".watch-line.streaming");
-}
-
-function streamWatchAssistant(chunk) {
-  const line = watchTail() ?? addWatchLine("pi · ", "streaming");
-  line.dataset.buffer = (line.dataset.buffer ?? "") + chunk;
-  line.textContent = `pi · ${previewLine(line.dataset.buffer)}`;
-  scrollWatch(true);
-}
-
-function finishWatchAssistant(text) {
-  const line = watchTail();
-  if (line) {
-    delete line.dataset.buffer;
-    line.classList.remove("streaming");
-    line.textContent = `pi · ${previewLine(text)}`;
-  } else {
-    addWatchLine(`pi · ${previewLine(text)}`);
-  }
-}
-
-function addWatchLine(text, cls = "") {
-  const line = document.createElement("div");
-  line.className = `watch-line ${cls}`.trim();
-  line.textContent = text;
-  const pinned = isWatchPinned();
-  el.watchMessages.appendChild(line);
-  // Keep the tail bounded; the snapshot already trimmed to the last 40.
-  while (el.watchMessages.children.length > 120) el.watchMessages.firstElementChild?.remove();
-  scrollWatch(pinned);
-  return line;
-}
-
-function isWatchPinned() {
-  return el.watchMessages.scrollTop + el.watchMessages.clientHeight >= el.watchMessages.scrollHeight - 30;
-}
-
-function scrollWatch(force) {
-  if (force || isWatchPinned()) el.watchMessages.scrollTop = el.watchMessages.scrollHeight;
-}
-
-/** One-line preview of any content shape (string or block array). */
-function watchText(content) {
-  if (typeof content === "string") return previewLine(content);
-  if (!Array.isArray(content)) return "…";
-  for (const block of content) {
-    if (block && typeof block === "object" && block.type === "text") return previewLine(block.text || "");
-  }
-  return "…";
-}
-
-function previewLine(text) {
-  const flat = String(text).replace(/\s+/g, " ").trim();
-  if (flat === "") return "…";
-  return flat.length > 110 ? `${flat.slice(0, 110)}…` : flat;
-}
-
 // ---------------------------------------------------------------- sidebar
 
 function shortPath(cwd) {
@@ -1446,8 +1249,7 @@ function renderSessions() {
   }
   for (const session of list) {
     const node = document.createElement("div");
-    const watching = state.watch?.path === session.path;
-    node.className = `item session${session.path === state.path ? " active" : ""}${session.pending ? " pending" : ""}${session.running ? " running" : ""}${watching ? " watching" : ""}`;
+    node.className = `item session${session.path === state.path ? " active" : ""}${session.pending ? " pending" : ""}${session.running ? " running" : ""}`;
     const badge = session.pending ? `<span class="badge">${t("session.badgeNew")}</span>` : "";
     const dot = session.running ? `<span class="run-dot" title="${t("session.running")}"></span>` : "";
     const sub = session.pending
@@ -1458,7 +1260,6 @@ function renderSessions() {
     node.innerHTML = `<div class="name" title="${esc(session.title)}">${dot}${esc(session.title)}${badge}</div>
       <div class="sub">${sub}</div>
       <div class="item-actions">
-        <button class="icon-btn session-act" data-act="watch" title="${t(watching ? "watch.stop" : "watch.open")}">👁</button>
         <button class="icon-btn session-act" data-act="rename" title="${t("session.rename")}">✎</button>
         <button class="icon-btn session-act" data-act="delete" title="${t("session.delete")}">🗑</button>
       </div>`;
@@ -1466,10 +1267,7 @@ function renderSessions() {
     node.querySelector(".item-actions").onclick = (event) => {
       event.stopPropagation();
       const act = event.target.closest(".session-act")?.dataset.act;
-      if (act === "watch") {
-        if (state.watch?.path === session.path) stopWatch();
-        else startWatch(session);
-      } else if (act === "rename") renameSession(session, node);
+      if (act === "rename") renameSession(session, node);
       else if (act === "delete") deleteSession(session, node);
     };
     el.sessionList.appendChild(node);
@@ -3764,7 +3562,6 @@ function bind() {
     if (event.target === el.treePanel) closeTreePanel();
   });
   el.lightbox.addEventListener("click", closeLightbox);
-  el.watchClose.onclick = stopWatch;
   el.settingsBack.onclick = closeSettings;
   el.settingsMenu.addEventListener("click", (event) => {
     const item = event.target.closest(".settings-menu");
@@ -3956,10 +3753,6 @@ globalThis.piShellDebug = {
   renderTree,
   openLightbox,
   closeLightbox,
-  startWatch,
-  stopWatch,
-  watchSnapshot,
-  watchEvent,
   setTheme,
   setLanguage,
   applyTheme,

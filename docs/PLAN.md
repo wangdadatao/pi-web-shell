@@ -202,7 +202,7 @@
 - [x] pi 发图：模型不能附图，改为正文 Markdown 引用本地图（`![alt](/abs/path.png)`、`file://`、`~/` 三种写法），新增 `GET /api/local-image` 代理——魔数嗅探只放行 PNG/JPEG/GIF/WEBP（不是任意文件读接口），ETag+mtime 缓存 — 验证：单测 31/31（sniff/扩展名伪装/相对路径 400/缺失 404）；curl 端到端（200+字节一致、txt 与 /etc/passwd 均 415、If-None-Match 304、URL 编码路径）；CDP 断言三种写法均重写为 `/api/local-image?path=`、外链不动、`md-img-local` 穿过 DOMPurify、图片在页面内真实解码（naturalWidth=1）
 - [x] 分支树可视化（`get_tree` / `fork` / `clone`）— 已交付 M2.15（只读树+分叉+克隆+活动分支高亮；label 编辑与节点预览为二期）
 - [x] 把 UI 断言固定成 `npm run ui:test`（当初靠 `npm run shot ... --eval` 手跑）— 已固化：`scripts/ui-test.ts` 一条命令跑 typecheck + 单测 + 全部 `ui-test-*.ts`（共享一个隔离服务端；脚本约定：首参为 base URL 则不自举）— 验证：`npm run ui:test` 全绿
-- [x] 多会话同屏 / 标签页 — 同屏部分已随 M2.17 监控栏交付（盯住任意会话的实时尾巴）；完整分屏/标签页（每窗格可对话）待后续
+- [x] 多会话同屏 / 标签页 — 试过监控栏方案（M2.17），实测无价值已删除（见 M2.18）；真要做须一步到位上完整分屏（每窗格独立输入框+流），暂缓
 - [x] 工具图点击放大（现在最大 320px）— 已随 M2.15 lightbox 交付（#messages 任意图片点击全尺寸查看）
 - [ ] Linux / Windows 的等价开机自启（systemd user unit / 计划任务）
 - [ ] 可选的 Docker 部署（供另一台机器使用）
@@ -503,3 +503,16 @@ M2.15 一版把每条消息渲染成一层，线性会话成了长楼梯（一�
 - [x] 测试升级：watch/tree 两脚本改断言 **computed display**（属性断言抓不到这类 bug
   ——之前全绿的盲区），首帧不可见/打开渲染/停止归零三处都看真实样式
 - 验证：watch 23 断言、tree 17 断言全过；npm run ui:test 全绿
+
+## M2.18 删除监控栏（2026-10-04）
+
+M2.17 的监控栏实测后删除。用户结论：展示的东西没有价值——
+①分不清是哪个会话的内容（盯当前会话时等于照镜子，无提示）；②点不了、跳不到对应会话；
+③一行 110 字的消息预览看不出它在干啥。根因是形态猜错了：「盯会话」要的不是对话残影，
+而是可读的状态呈现（在干什么、进展到哪、何时完），那是另一个设计。
+
+- [x] 彻底移除：HTML 面板、app.js 全部 watch 函数与 👁 按钮、CSS、i18n 18 词条、
+  ui-test-watch.ts；服务端本就零改动（复用 /api/stream），无需回退
+- 保留：computed-display 断言升级（watch/tree 测试里防「hidden 属性失效」的那套，
+  已并入 tree 测试继续生效）；「多会话同屏」待办改为记录结论
+- 回归：typecheck 干净；单测 80/80；npm run ui:test 8 个脚本全绿

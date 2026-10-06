@@ -128,10 +128,6 @@ const MESSAGES = {
     "session.badgeNew": "新",
     "session.rename": "重命名",
     "session.delete": "删除会话",
-    "watch.open": "盯这个会话（右侧只读监控）",
-    "watch.stop": "停止监控",
-    "watch.connecting": "连接中…",
-    "watch.disconnected": "监控连接断开（重试次数用尽）；关闭再打开可重试",
 
     /* ---------- chat ---------- */
     "chat.selectSession": "选择一个会话",
@@ -461,10 +457,6 @@ const MESSAGES = {
     "session.badgeNew": "new",
     "session.rename": "Rename",
     "session.delete": "Delete session",
-    "watch.open": "Watch this session (read-only tail)",
-    "watch.stop": "Stop watching",
-    "watch.connecting": "Connecting…",
-    "watch.disconnected": "Watch stream lost (retries exhausted); close and reopen to retry",
 
     /* ---------- chat ---------- */
     "chat.selectSession": "Select a session",
