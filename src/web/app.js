@@ -298,6 +298,9 @@ const state = {
   settingsSaveStatus: null,
   /** Same for the AGENTS.md editor. */
   agentsMdStatus: null,
+  /** Branch tree payload + which collapsed branches are expanded. */
+  tree: null,
+  treeExpanded: new Set(),
   /** Payload being fetched right now, so we never ask twice. */
   pendingKey: null,
   /** Payload that failed, so we do not retry in a loop. */
@@ -873,6 +876,7 @@ async function openTreePanel() {
   if (!state.path) return;
   el.treePanel.hidden = false;
   el.treeBody.innerHTML = `<div class="settings-empty">${esc(t("tree.loading"))}</div>`;
+  state.treeExpanded = new Set();
   try {
     state.tree = await api.tree(state.path);
     renderTree();
@@ -888,51 +892,137 @@ function closeTreePanel() {
   state.tree = null;
 }
 
+/**
+ * Lay the forest out as one flat spine of turns plus collapsed branch chips.
+ *
+ * The spine is the active root-to-leaf chain (the first root when nothing is
+ * active); every side child folds into a "⑂ branch" chip, expandable on
+ * click. Inside an expanded branch the same layout recurses, with the first
+ * child standing in for the missing active path. One turn = one user message
+ * plus the replies that followed it, so a linear session renders as a flat
+ * list instead of a staircase.
+ */
 function renderTree() {
   const view = state.tree;
   if (!view) return;
-  if (view.nodes.length === 0) {
+  if (!view.nodes || view.nodes.length === 0) {
     el.treeBody.innerHTML = `<div class="settings-empty">${esc(t("tree.empty"))}</div>`;
     return;
   }
   el.treeBody.innerHTML = "";
-  for (const node of view.nodes) el.treeBody.appendChild(treeNodeDom(node));
+  renderTreeNodes(view.nodes, el.treeBody, false);
 }
 
-function treeNodeDom(node) {
-  const row = document.createElement("div");
-  row.className = `tree-node ${node.kind}${node.active ? " active" : ""}`;
-  row.dataset.entryId = node.id;
+function renderTreeNodes(nodes, container, followFirst) {
+  const spineRoot = nodes.find((node) => node.active) ?? nodes[0];
+  for (const root of nodes) {
+    if (root !== spineRoot) container.appendChild(branchDom(root));
+  }
 
-  const head = document.createElement("div");
-  head.className = "tree-row";
-  const who = node.kind === "user" ? t("msg.you") : node.kind === "assistant" ? "pi" : "·";
-  head.innerHTML = `<span class="tree-who">${esc(who)}</span><span class="tree-preview">${esc(
-    node.preview,
+  // The linear spine: follow active children (first children inside a branch).
+  const chain = [];
+  for (let node = spineRoot; node; ) {
+    chain.push(node);
+    const kids = node.children || [];
+    node = kids.find((kid) => kid.active) ?? (followFirst ? kids[0] : undefined);
+  }
+
+  // Group the spine into turns; side children hang off the turn that owns
+  // their fork point, so each chip sits right below the conversation turn
+  // where the split happened.
+  const turns = [];
+  let turn = null;
+  for (let index = 0; index < chain.length; index += 1) {
+    const node = chain[index];
+    if (node.kind === "user" || !turn) {
+      turn = { user: node.kind === "user" ? node : null, replies: [], labels: [], branches: [] };
+      turns.push(turn);
+    }
+    if (node.kind !== "user") turn.replies.push(node);
+    if (node.label) turn.labels.push(node.label);
+    for (const kid of node.children || []) {
+      if (kid !== chain[index + 1]) turn.branches.push(kid);
+    }
+  }
+
+  for (const item of turns) {
+    container.appendChild(turnDom(item));
+    for (const branch of item.branches) container.appendChild(branchDom(branch));
+  }
+}
+
+function turnDom(turn) {
+  const row = document.createElement("div");
+  const onActivePath = turn.user ? turn.user.active : turn.replies[0]?.active === true;
+  row.className = `tree-turn${onActivePath ? " active" : ""}`;
+  if (turn.user) row.dataset.entryId = turn.user.id;
+
+  const main = document.createElement("div");
+  main.className = "tree-row";
+  const who = turn.user ? t("msg.you") : "·";
+  main.innerHTML = `<span class="tree-who">${esc(who)}</span><span class="tree-preview">${esc(
+    turn.user ? turn.user.preview : "…",
   )}</span>`;
-  if (node.label) {
+  for (const label of turn.labels.slice(0, 2)) {
     const chip = document.createElement("span");
     chip.className = "tree-label";
-    chip.textContent = node.label;
-    head.appendChild(chip);
+    chip.textContent = label;
+    main.appendChild(chip);
   }
-  if (node.kind === "user") {
+  if (turn.user) {
     const forkButton = document.createElement("button");
     forkButton.className = "tree-fork";
     forkButton.type = "button";
     forkButton.textContent = t("tree.fork");
-    forkButton.onclick = () => forkFrom(node.id, forkButton);
-    head.appendChild(forkButton);
+    forkButton.onclick = () => forkFrom(turn.user.id, forkButton);
+    main.appendChild(forkButton);
   }
-  row.appendChild(head);
+  row.appendChild(main);
 
-  if (node.children.length > 0) {
-    const kids = document.createElement("div");
-    kids.className = "tree-children";
-    for (const child of node.children) kids.appendChild(treeNodeDom(child));
-    row.appendChild(kids);
+  if (turn.replies.length > 0) {
+    const sub = document.createElement("div");
+    sub.className = "tree-sub";
+    sub.textContent = turn.replies.map((reply) => reply.preview).join(" / ");
+    row.appendChild(sub);
   }
   return row;
+}
+
+function branchDom(root) {
+  const wrap = document.createElement("div");
+  wrap.className = "tree-branch-wrap";
+  const chip = document.createElement("button");
+  chip.type = "button";
+  chip.className = "tree-branch-chip";
+  chip.dataset.branchId = root.id;
+  const label = document.createElement("span");
+  label.className = "tree-branch-mark";
+  label.textContent = "⑂";
+  chip.appendChild(label);
+  chip.appendChild(document.createTextNode(t("tree.branch", { count: countTreeEntries(root) })));
+  const preview = document.createElement("span");
+  preview.className = "tree-preview";
+  preview.textContent = root.preview;
+  chip.appendChild(preview);
+  chip.onclick = () => {
+    if (state.treeExpanded.has(root.id)) state.treeExpanded.delete(root.id);
+    else state.treeExpanded.add(root.id);
+    renderTree();
+  };
+  wrap.appendChild(chip);
+  if (state.treeExpanded.has(root.id)) {
+    const inner = document.createElement("div");
+    inner.className = "tree-branch-children";
+    renderTreeNodes([root], inner, true);
+    wrap.appendChild(inner);
+  }
+  return wrap;
+}
+
+function countTreeEntries(node) {
+  let total = 1;
+  for (const kid of node.children || []) total += countTreeEntries(kid);
+  return total;
 }
 
 async function forkFrom(entryId, button) {

@@ -257,27 +257,45 @@ async function main(baseUrl: string): Promise<void> {
       return "ready";
     })()`);
 
-    // 1) the panel renders the tree with highlights, labels, fork buttons
+    // 1) the panel renders as a flat active spine with the side branch folded
+    //    into one chip: two turns (user + replies merged), fork buttons on the
+    //    spine, the abandoned branch hidden until expanded.
     await evalJs(`document.getElementById("tree-btn").click()`);
     await sleep(400);
     const panel = (await evalJs(`(() => {
-      const nodes = [...document.querySelectorAll("#tree-body .tree-node")];
+      const turns = [...document.querySelectorAll("#tree-body .tree-turn")];
       return {
         open: !document.getElementById("tree-panel").hidden,
-        count: nodes.length,
-        users: nodes.filter((n) => n.classList.contains("user")).length,
+        turns: turns.length,
         forks: document.querySelectorAll("#tree-body .tree-fork").length,
-        active: nodes.filter((n) => n.classList.contains("active")).length,
+        activeTurns: turns.filter((n) => n.classList.contains("active")).length,
+        chips: document.querySelectorAll("#tree-body .tree-branch-chip").length,
+        chipText: document.querySelector("#tree-body .tree-branch-chip")?.textContent ?? "",
+        subLine: document.querySelector("#tree-body .tree-sub")?.textContent ?? "",
         labels: [...document.querySelectorAll("#tree-body .tree-label")].map((l) => l.textContent),
       };
     })()`)) as Record<string, unknown>;
     ok(panel.open, "tree panel opens from the header button");
-    ok(panel.count === 5, `all 5 nodes rendered (got ${panel.count})`);
-    ok(panel.users === 3 && Number(panel.forks) === 3, `user nodes carry fork buttons (${panel.users} users, ${panel.forks} buttons)`);
-    ok(panel.active === 4, `active branch highlighted (got ${panel.active} of 4 expected)`);
+    ok(panel.turns === 2, `one row per turn on the spine (got ${panel.turns})`);
+    ok(panel.forks === 2, `spine turns carry fork buttons (got ${panel.forks})`);
+    ok(panel.activeTurns === 2, `active spine highlighted (got ${panel.activeTurns})`);
+    ok(panel.chips === 1, `abandoned branch folded into one chip (got ${panel.chips})`);
+    ok(String(panel.chipText).includes("1 条"), `chip names its size (${panel.chipText})`);
+    ok(String(panel.subLine).includes("先看日志"), `assistant reply folded into the turn (${panel.subLine})`);
     ok(String(panel.labels) === "实验", `label chip rendered (${panel.labels})`);
 
-    // 2) fork: closes the panel, posts the entryId, re-attaches the stream
+    // 2) expanding the chip reveals the branch's own turns, fork buttons included
+    await evalJs(`document.querySelector("#tree-body .tree-branch-chip").click()`);
+    await sleep(200);
+    const expanded = (await evalJs(`(() => ({
+      turns: document.querySelectorAll("#tree-body .tree-turn").length,
+      forks: document.querySelectorAll("#tree-body .tree-fork").length,
+      nested: document.querySelectorAll("#tree-body .tree-branch-children .tree-turn").length,
+    }))()`)) as Record<string, unknown>;
+    ok(expanded.turns === 3 && expanded.nested === 1, `expansion adds the branch's turn (${expanded.turns} total, ${expanded.nested} nested)`);
+    ok(expanded.forks === 3, `branch user message got a fork button too (${expanded.forks})`);
+
+    // 3) fork: closes the panel, posts the entryId, re-attaches the stream
     await evalJs(`document.querySelector('#tree-body [data-entry-id="u2"] .tree-fork').click()`);
     await sleep(400);
     const afterFork = (await evalJs(`(() => ({
@@ -292,7 +310,7 @@ async function main(baseUrl: string): Promise<void> {
     );
     ok(afterFork.notice === true, "fork notice shown");
 
-    // 3) clone: posts, closes, refreshes the session list
+    // 4) clone: posts, closes, refreshes the session list
     await evalJs(`document.getElementById("tree-btn").click()`);
     await sleep(300);
     await evalJs(`document.getElementById("tree-clone").click()`);
@@ -305,7 +323,7 @@ async function main(baseUrl: string): Promise<void> {
     ok(afterClone.closed && Number(afterClone.cloneCalls) === 1, "clone posted once and closed the panel");
     ok(String(afterClone.notice).includes("已克隆"), `clone notice shown (${afterClone.notice})`);
 
-    // 4) Escape and backdrop close the panel
+    // 5) Escape and backdrop close the panel
     await evalJs(`document.getElementById("tree-btn").click()`);
     await sleep(300);
     await evalJs(`window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }))`);
@@ -315,7 +333,7 @@ async function main(baseUrl: string): Promise<void> {
     await evalJs(`document.getElementById("tree-panel").click()`);
     ok(await evalJs(`document.getElementById("tree-panel").hidden`), "backdrop click closes the tree panel");
 
-    // 5) lightbox: any transcript image opens full-size in-app
+    // 6) lightbox: any transcript image opens full-size in-app
     await evalJs(`(() => {
       const img = document.createElement("img");
       img.className = "md-img-local";
@@ -332,7 +350,7 @@ async function main(baseUrl: string): Promise<void> {
     await evalJs(`window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }))`);
     ok(await evalJs(`document.getElementById("lightbox").hidden`), "Escape closes the lightbox");
 
-    // 6) no page errors during the whole run
+    // 7) no page errors during the whole run
     ok(pageErrors.length === 0, `no page exceptions (got ${pageErrors.length}${pageErrors.length ? ": " + pageErrors[0] : ""})`);
 
     cdp.close();
