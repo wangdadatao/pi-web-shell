@@ -49,6 +49,12 @@ pi --mode rpc 子进程（每个打开的会话一个）
 **跟有没有浏览器在看无关**，所以这是权威信号，不需要轮询或猜会话文件的 mtime。
 变化通过 `onActivity` 广播，`/api/sessions` 的每个会话据此带 `running` 字段。
 
+每条 activity 帧还带一个 `reason`，因为「不再运行」有四种来源，客户端必须能区分：
+`started`（开跑）、`settled`（正常跑完，含 abort）、`exited`（子进程死了）、
+`retired`（空闲回收 / 改配置后 `disposeAll`）。前两者是「这次任务结束了」，
+后两者不是。前端只对 `settled` / `exited` 弹通知，且 `retired` 绝不能弹——
+否则每次回收暖会话都会变成一次骚扰。
+
 局限：只有本服务 own 的子进程能被感知。你在终端里另起的 `pi`（交互式或 RPC）没有
 接入这个注册表，看不到运行态。
 
@@ -112,7 +118,7 @@ pi 只有在第一条消息时才会把会话写盘。所以新建会话后 `get
 | POST | `/api/delete` | `{ path }` → 会话文件进废纸篓（没有 `trash` 就 unlink），删前先 dispose 活跃子进程 |
 | POST | `/api/delete-folder` | `{ cwd }` → 删除该目录下全部会话文件（并行），不碰目录本身与其他文件 |
 | GET | `/api/stream?path=<file>` | SSE：先发 `snapshot`（state + messages + stats），后转发实时事件。响应 gzip |
-| GET | `/api/events` | SSE：全局会话运行态。每帧 `{type:"activity", path, running}`，连接时先补发当前运行中的会话。与具体会话无关，所以能在没打开该会话时也能收到 |
+| GET | `/api/events` | SSE：全局会话运行态。每帧 `{type:"activity", path, running, reason}`，连接时先补发当前运行中的会话。与具体会话无关，所以没打开该会话也能收到 |
 | GET | `/api/tree?path=<file>` | 代理 `get_tree`，再经 `treeView.ts` 瘦身成面板要的 `{ nodes, leafId }`（只有 id/kind/preview/label/active） |
 | POST | `/api/fork` | `{ path, entryId }` → `fork`；返回 `{ ok, cancelled, text }` |
 | POST | `/api/clone` | `{ path }` → `clone`，再 `get_state` 补回副本路径；子进程若切了文件就 dispose 它防漂移 |
@@ -136,9 +142,21 @@ SSE 帧格式：`snapshot` | `event`（pi 原始事件） | `stats`（`get_sessi
 `stats` 在开流时随 `snapshot` 一起下发，并在每次 `agent_settled` 后重新推送，
 所以统计条不需要轮询。
 
-`/api/events` 是另一条独立的长连接，只推运行态：侧栏的绿点（会话级 + 文件夹聚合）
-由它驱动。页面加载时 `refreshSessionList()` 先用 `/api/sessions` 拿一次当前状态，
-`/api/events` 连接时再补发运行中的会话，避免两次请求之间的空窗丢事件。
+`/api/events` 是另一条独立的长连接，只推运行态。页面加载时 `refreshSessionList()` 先用
+`/api/sessions` 拿一次当前状态，`/api/events` 连接时再补发运行中的会话，避免两次请求之间的空窗丢事件。
+它驱动三件事：侧栏的绿点（会话级 + 文件夹聚合）、「你切走的会话跑完了」的通知、
+以及标题栏的 `(n)` 未读角标。
+
+后端会话不进 `SessionRegistry`，所以**切走只是关掉 `/api/stream`，不是停掉子进程**：
+`release()` 在 `streaming` 时不 arm 空闲回收，子进程继续把这一轮跑完。
+前端 `applyActivity(path, running, reason)` 只在「不是当前打开的会话、且 reason 是
+settled/exited」时提醒；用户点过「停止」的路径会先记进 `abortedPaths` 抑制掉，
+因为 abort 走的也是 `settled`，和自然结束无法从事件本身区分。
+
+提醒的 toast 带 `toast-global` 类：`resetExtensionUi()`（切会话时）只清扩展的通知，
+不清这类跨会话的通知。`document.title` 由 `applyDocumentTitle()` 单点写入，
+把扩展的 `setTitle` 和未读角标叠在一起（两个互不相关的来源不能各写各的）。
+打开会话即视为已读，开跑新一轮也会清掉该会话的旧角标。
 
 **两条长连接的重连策略不一样，因为代价不一样**：
 

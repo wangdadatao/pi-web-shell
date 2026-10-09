@@ -538,3 +538,26 @@ resources 页的「只读」脚注与「启用/禁用还没实现」）。
   （模型「只读」/ agent「只读 + 计划中」）同步 — 验证：中英字典 292/292 对齐、无 `agent.plan.2` 残留
 - [x] 顺手修 `httpServer.ts` 里「Settings page. Both are read-only」的过时注释
 - 回归：typecheck 干净；单测 80/80；`npm run ui:test` 8 个脚本全绿
+
+## M2.20 切走的会话跑完了能提醒（2026-10-07）
+
+问题：一个会话跑着，切去看别的；它跑完时只有侧栏绿点悄悄熄灭，人看不到。
+结论：检测早就有了——`/api/events` 的 activity 通道本来就为「你切走的会话还在干活」
+建的（M2.17 删监控栏时保留），缺的只是「提醒」这一层。
+
+- [x] 后端 activity 帧加 `reason`（`started`/`settled`/`exited`/`retired`）：
+  `setStreaming` 三处调用点分别标 settle、exit、retire——否则空闲回收也会被当成「跑完」
+  弹通知（60s 内 user abort 也算 abort）。 — 验证：`sessionRegistry.test.ts` 新增 3 例
+  （fake pi 发 `agent_start`/`agent_settled`；kill 子进程得 `exited`；运行中 `disposeAll` 得 `retired`）
+- [x] 前端 `applyActivity(path, running, reason)`：只在「不是当前打开的会话 + settled/exited」时提醒；
+  点过「停止」的路径先进 `abortedPaths` 抑制（abort 走的也是 settled，事件本身分不开），
+  再开新轮或开会话时清掉；`showToast` 接受可点击回调，点 toast 直接跳会话
+- [x] 标题未读角标：`unreadDone` + `applyDocumentTitle()` 单点写 `document.title`，
+  与扩展 `setTitle` 叠加（两个来源不能各写各的）；打开会话即已读
+- [x] 通知 toast 标 `toast-global`：`resetExtensionUi()` 只清扩展通知，不清跨会话通知 —
+  否则点一条通知会连带把另一条未读通知也清掉（测试抓出）
+- [x] i18n 新增 4 词条中英对齐（`chat.backgroundDone`/`backgroundFailed`/`ui.openSession` + 角标）
+- 验证：`scripts/ui-test-notify.ts` 23 断言（started 不弹 / settled 弹且带会话名 / 角标 (1) /
+  当前会话不弹 / retired 不弹 / exited 措辞不同 / abort 不弹 / 重跑清旧角标 / 点 toast 跳会话
+  并清角标 / 扩展标题与角标叠加 / 无页面异常）；后端 3 例
+- 回归：typecheck 干净；单测 95/95；`npm run ui:test` 9 个脚本全绿
