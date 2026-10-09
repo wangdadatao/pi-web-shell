@@ -1,8 +1,9 @@
-/* global EventSource, fetch, document, window, FileReader */
+/* global EventSource, fetch, document, window, FileReader, requestAnimationFrame */
 
 import { marked } from "./vendor/marked.esm.js";
 import DOMPurify from "./vendor/purify.es.mjs";
 import { LOCALES, getLocale, setLocale, t } from "./i18n.js";
+import { continuesList, findStableEnd } from "./liveMarkdown.js";
 
 marked.setOptions({ gfm: true, breaks: true });
 
@@ -317,6 +318,13 @@ const state = {
   /** Title from index.html, restored when an extension clears its own. */
   defaultTitle: "pi-web-shell",
   /**
+   * Sessions that finished a run while unopened. Drives the `(n)` title badge;
+   * opening the session or seeing it start again clears its entry.
+   */
+  unreadDone: new Set(),
+  /** Paths whose finish the user asked for (clicked stop): not news to them. */
+  abortedPaths: new Set(),
+  /**
    * Extension UI state (`setStatus` / `setWidget` / `setTitle`). Keyed maps, not
    * a single value: several extensions can own distinct keys, and a session
    * switch resets the whole set.
@@ -345,11 +353,16 @@ function esc(text) {
   return String(text).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 }
 
+/** Markdown → sanitized HTML fragment (no wrapper), for incremental assembly. */
+function renderMarkdownHtml(text) {
+  if (!text) return "";
+  return DOMPurify.sanitize(marked.parse(String(text)));
+}
+
 /** Render model/user prose as sanitized Markdown. */
 function renderMarkdown(text) {
   if (!text) return "";
-  const html = marked.parse(String(text));
-  return `<div class="md">${DOMPurify.sanitize(html)}</div>`;
+  return `<div class="md">${renderMarkdownHtml(text)}</div>`;
 }
 
 /**
@@ -1326,6 +1339,10 @@ async function openSession(session) {
   closeLightbox();
   state.path = session.path;
   state.cwd = session.cwd;
+  // Opening the session is the acknowledgement: drop its finished badge.
+  state.unreadDone.delete(session.path);
+  state.abortedPaths.delete(session.path);
+  applyDocumentTitle();
   el.messages.innerHTML = "";
   el.chatTitle.textContent = session.title;
   el.chatMeta.textContent = session.cwd;
@@ -1640,7 +1657,7 @@ function renderExtensionUi() {
   renderWidgetBucket(el.extWidgetAbove, state.extension.widgets.aboveEditor);
   renderWidgetBucket(el.extWidgetBelow, state.extension.widgets.belowEditor);
 
-  document.title = state.extension.title ? `${state.extension.title} \u00b7 ${state.defaultTitle}` : state.defaultTitle;
+  applyDocumentTitle();
 }
 
 function renderWidgetBucket(node, widgets) {
@@ -1661,15 +1678,21 @@ function renderWidgetBucket(node, widgets) {
 
 const TOAST_TYPES = new Set(["info", "warning", "error"]);
 
-function showToast(message, type) {
+function showToast(message, type, onClick) {
   const text = stripAnsi(message).trim();
   if (!text) return;
   const kind = TOAST_TYPES.has(type) ? type : "info";
   const node = document.createElement("div");
   node.className = `toast toast-${kind}`;
   node.textContent = text;
-  node.title = t("ui.dismiss");
-  node.onclick = () => node.remove();
+  node.title = onClick ? t("ui.openSession") : t("ui.dismiss");
+  // `toast-global` marks a notice that is not tied to the open session, so a
+  // session switch must not sweep it away (unlike an extension's notifications).
+  if (onClick) node.classList.add("toast-action", "toast-global");
+  node.onclick = () => {
+    if (onClick) onClick();
+    node.remove();
+  };
   el.toasts.appendChild(node);
   // Errors linger: they usually explain why a command did nothing.
   setTimeout(() => node.remove(), kind === "error" ? 10_000 : 6_000);
@@ -1837,7 +1860,9 @@ function resetExtensionUi() {
   state.extension.status = new Map();
   state.extension.widgets = { aboveEditor: new Map(), belowEditor: new Map() };
   state.extension.title = null;
-  el.toasts.innerHTML = "";
+  // Extension notifications belong to the session being left; background
+  // completion notices do not, so they stay put with their title badge.
+  for (const toast of el.toasts.querySelectorAll(".toast:not(.toast-global)")) toast.remove();
   renderExtensionUi();
 }
 
@@ -1926,6 +1951,83 @@ function estimateTokens(text) {
   return cjk / 1.4 + other / 4;
 }
 
+/** Text blocks with a render queued for the next animation frame. */
+const livePending = new Set();
+let liveFrame = 0;
+
+/** Coalesce many deltas into at most one live render per frame. */
+function scheduleLiveText(textBlock) {
+  livePending.add(textBlock);
+  if (liveFrame) return;
+  liveFrame = requestAnimationFrame(() => {
+    liveFrame = 0;
+    const blocks = [...livePending];
+    livePending.clear();
+    for (const block of blocks) renderLiveText(block);
+    scrollToEnd();
+  });
+}
+
+/**
+ * Render an in-progress text block so formatting appears while the model is
+ * still writing.
+ *
+ * Only regions that can no longer change are committed: their HTML is inserted
+ * once (so Prism and Mermaid run once), and a still-growing tail is re-rendered
+ * on top. The tail is Markdown too — a half-typed paragraph should look like a
+ * paragraph — except inside an open fence, where the raw source is shown until
+ * the fence closes rather than letting an unfinished code block swallow the
+ * reply.
+ */
+function renderLiveText(textBlock) {
+  if (!textBlock.isConnected) return;
+  const text = textBlock.dataset.text;
+  if (!textBlock.dataset.ready) {
+    textBlock.innerHTML = '<div class="md live-md"><div class="live-tail"></div></div>';
+    textBlock.dataset.ready = "1";
+    textBlock.dataset.stableLen = "0";
+  }
+  const md = textBlock.querySelector(".live-md");
+  const tailEl = textBlock.querySelector(".live-tail");
+  if (!md || !tailEl) return;
+
+  let committed = Number(textBlock.dataset.stableLen || 0);
+  if (committed > text.length) {
+    // The text shrank (a rewind): drop what was committed and rebuild.
+    md.replaceChildren(tailEl);
+    committed = 0;
+  }
+  const { end, inFence } = findStableEnd(text, committed);
+  if (end > committed) {
+    commitStable(md, tailEl, text.slice(committed, end));
+    committed = end;
+  }
+  textBlock.dataset.stableLen = String(committed);
+
+  const tail = text.slice(committed);
+  tailEl.classList.toggle("plain", inFence);
+  tailEl.innerHTML = inFence ? esc(tail) : renderMarkdownHtml(tail);
+}
+
+/**
+ * Append one committed region, extending the previous chunk when the two are
+ * the same loose list so ordered numbering and indentation survive the split.
+ */
+function commitStable(md, tailEl, chunk) {
+  const previous = tailEl.previousElementSibling;
+  if (previous && previous.dataset.text !== undefined && continuesList(previous.dataset.text, chunk)) {
+    const merged = previous.dataset.text + chunk;
+    previous.dataset.text = merged;
+    previous.innerHTML = renderMarkdownHtml(merged);
+    return;
+  }
+  const node = document.createElement("div");
+  node.className = "live-chunk";
+  node.dataset.text = chunk;
+  node.innerHTML = renderMarkdownHtml(chunk);
+  md.insertBefore(node, tailEl);
+}
+
 function appendText(chunk, full) {
   const live = ensureLive();
   let textBlock = live.querySelector(".live-text");
@@ -1936,12 +2038,17 @@ function appendText(chunk, full) {
     textBlock.dataset.text = "";
   }
   if (full !== undefined) {
+    // `text_end` carries the block's final text: render it whole and drop the
+    // incremental scaffolding, so the result is exactly `renderMarkdown`.
     textBlock.dataset.text = full;
     textBlock.innerHTML = renderMarkdown(full);
-  } else {
-    textBlock.dataset.text += chunk;
-    textBlock.textContent = textBlock.dataset.text;
+    delete textBlock.dataset.ready;
+    delete textBlock.dataset.stableLen;
+    livePending.delete(textBlock);
+    return;
   }
+  textBlock.dataset.text += chunk;
+  scheduleLiveText(textBlock);
 }
 
 function appendThinking(chunk) {
@@ -2464,12 +2571,52 @@ function openActivityStream() {
   };
 }
 
-function applyActivity(path, running) {
+function applyActivity(path, running, reason) {
   const session = state.sessions.find((s) => s.path === path);
   if (!session || Boolean(session.running) === running) return;
   session.running = running;
+  if (running) {
+    // A new run supersedes a stale "finished" badge for this session.
+    state.unreadDone.delete(path);
+    applyDocumentTitle();
+  } else {
+    const wasAborted = state.abortedPaths.delete(path);
+    // `retired` is the idle reaper, not a finish; and a session the user is
+    // looking at updates live, so there is nothing to notify about.
+    if (!wasAborted && path !== state.path && (reason === "settled" || reason === "exited")) {
+      state.unreadDone.add(path);
+      applyDocumentTitle();
+      const failed = reason === "exited";
+      showToast(
+        t(failed ? "chat.backgroundFailed" : "chat.backgroundDone", { title: session.title }),
+        failed ? "error" : "info",
+        () => openSession(session),
+      );
+    }
+  }
   renderFolders();
   renderSessions();
+}
+
+/** Remember that a finish for this path is expected, so it is not announced. */
+function markAborted(path) {
+  if (!path) return;
+  state.abortedPaths.add(path);
+  // Safety net: if the abort never settles (failed request, already-idle
+  // session), the marker must not suppress the next genuine completion.
+  setTimeout(() => state.abortedPaths.delete(path), 60_000);
+}
+
+/**
+ * Single writer of `document.title`, combining an extension's `setTitle` with
+ * the unread-finished count. Two independent sources, so they cannot each own
+ * the property.
+ */
+function applyDocumentTitle() {
+  const base = state.extension.title
+    ? `${state.extension.title} \u00b7 ${state.defaultTitle}`
+    : state.defaultTitle;
+  document.title = state.unreadDone.size > 0 ? `(${state.unreadDone.size}) ${base}` : base;
 }
 
 /* ------------------------------------------------------------------ *
@@ -3541,6 +3688,7 @@ function bind() {
   el.send.onclick = sendMessage;
   el.abort.onclick = async () => {
     if (!state.path) return;
+    markAborted(state.path);
     try {
       await api.abort(state.path);
     } catch (error) {
@@ -3753,6 +3901,8 @@ globalThis.piShellDebug = {
   renderTree,
   openLightbox,
   closeLightbox,
+  applyActivity,
+  markAborted,
   setTheme,
   setLanguage,
   applyTheme,

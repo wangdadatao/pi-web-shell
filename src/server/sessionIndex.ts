@@ -4,8 +4,16 @@ import { join } from "node:path";
 import type { FolderSummary, SessionSummary } from "../shared/types.ts";
 
 const HEAD_BYTES = 256 * 1024;
-const TAIL_BYTES = 128 * 1024;
 const MAX_TITLE = 80;
+/**
+ * Backward name scan. A `/name` is appended once and then buried by everything
+ * that follows it, so in a busy file it can sit arbitrarily far from the end —
+ * farther than any fixed tail window. We walk back in chunks and stop at the
+ * first hit; the cap only bounds the rare from-scratch scan of a large file
+ * that was never renamed.
+ */
+const NAME_SCAN_CHUNK_BYTES = 256 * 1024;
+const MAX_NAME_SCAN_BYTES = 4 * 1024 * 1024;
 
 interface SessionHeader {
   type: "session";
@@ -19,6 +27,11 @@ interface CacheEntry {
   mtimeMs: number;
   sizeBytes: number;
   summary: SessionSummary;
+  /**
+   * File size at the last name scan: everything before it has already been
+   * examined, so a later read only has to look at what was appended since.
+   */
+  nameScanTo: number;
 }
 
 export interface SessionIndexOptions {
@@ -34,8 +47,8 @@ export interface SessionIndexOptions {
  * working directory is always read from the session header, never parsed from
  * the directory name.
  *
- * Files can be large, so we only read a head slice (header + first user
- * message) and a tail slice (most recent `/name`).
+ * Files can be large, so we read a head slice (header + first user message) and
+ * find the most recent `/name` by scanning back from the end.
  */
 export class SessionIndex {
   readonly sessionsDir: string;
@@ -128,9 +141,8 @@ export class SessionIndex {
       return null;
     }
 
-    const cached = this.cache.get(path);
+    const cached = this.useCache ? this.cache.get(path) : undefined;
     if (
-      this.useCache &&
       cached &&
       cached.mtimeMs === fileStat.mtimeMs &&
       cached.sizeBytes === fileStat.size
@@ -138,11 +150,11 @@ export class SessionIndex {
       return cached.summary;
     }
 
-    const { head, tail } = await readSlices(path, fileStat.size);
+    const head = await readHead(path, fileStat.size);
     const header = findHeader(head);
     if (!header?.cwd) return null;
 
-    const name = findLastName(tail) ?? findLastName(head);
+    const name = await this.findName(path, fileStat.size, head, cached);
     const firstUser = findFirstUserText(head);
 
     // The header timestamp is the creation time. When a file has no header
@@ -162,8 +174,40 @@ export class SessionIndex {
       ...(name !== undefined ? { name } : {}),
     };
 
-    this.cache.set(path, { mtimeMs: fileStat.mtimeMs, sizeBytes: fileStat.size, summary });
+    this.cache.set(path, {
+      mtimeMs: fileStat.mtimeMs,
+      sizeBytes: fileStat.size,
+      summary,
+      nameScanTo: fileStat.size,
+    });
     return summary;
+  }
+
+  /**
+   * The most recent `session_info` name, or undefined when never renamed.
+   *
+   * pi appends the name and then keeps appending the conversation, so a rename
+   * can end up far from the end of a large, busy file. Because the file is
+   * append-only, a scan we already ran stays valid: only the bytes written since
+   * can hold a newer name. So we read just that tail-delta, and only fall back
+   * to a bounded backward scan on the first (or a rewritten) file.
+   */
+  private async findName(
+    path: string,
+    size: number,
+    head: string,
+    cached: CacheEntry | undefined,
+  ): Promise<string | undefined> {
+    // The head slice is the entire file, so it already holds the last name.
+    if (size <= HEAD_BYTES) return findLastName(head);
+
+    // Append-only: anything before the last scan's EOF was already examined.
+    if (cached && size >= cached.nameScanTo) {
+      const appended = (await readRange(path, cached.nameScanTo, size)).toString("utf8");
+      return findLastName(appended) ?? cached.summary.name;
+    }
+
+    return scanNameBackward(path, size, head);
   }
 }
 
@@ -172,34 +216,63 @@ function basenameWithoutExtension(path: string): string {
   return base.replace(/\.jsonl$/, "");
 }
 
-async function readSlices(
-  path: string,
-  size: number,
-): Promise<{ head: string; tail: string }> {
-  if (size === 0) return { head: "", tail: "" };
+async function readHead(path: string, size: number): Promise<string> {
+  if (size === 0) return "";
+  const length = Math.min(HEAD_BYTES, size);
   const handle = await open(path, "r");
   try {
-    const headLength = Math.min(HEAD_BYTES, size);
-    const headBuffer = Buffer.alloc(headLength);
-    await handle.read(headBuffer, 0, headLength, 0);
-
-    if (size <= HEAD_BYTES) {
-      return { head: headBuffer.toString("utf8"), tail: headBuffer.toString("utf8") };
-    }
-
-    const tailLength = Math.min(TAIL_BYTES, size);
-    const tailBuffer = Buffer.alloc(tailLength);
-    await handle.read(tailBuffer, 0, tailLength, size - tailLength);
+    const buffer = Buffer.alloc(length);
+    await handle.read(buffer, 0, length, 0);
     // A byte cut can land inside a character, and the decoder answers with
     // U+FFFD — verified: a truncated UTF-8 sequence never decodes to half of a
     // surrogate pair, so there is nothing to repair here. Nor can the damage
     // escape: the mangled line is always a partial line, and a partial line
     // fails `JSON.parse` inside `lines()`, so it is dropped before it can reach
     // a title.
-    return { head: headBuffer.toString("utf8"), tail: tailBuffer.toString("utf8") };
+    return buffer.toString("utf8");
   } finally {
     await handle.close();
   }
+}
+
+/** Read the half-open byte range `[start, end)` as raw bytes. */
+async function readRange(path: string, start: number, end: number): Promise<Buffer> {
+  if (end <= start) return Buffer.alloc(0);
+  const buffer = Buffer.alloc(end - start);
+  const handle = await open(path, "r");
+  try {
+    await handle.read(buffer, 0, buffer.length, start);
+    return buffer;
+  } finally {
+    await handle.close();
+  }
+}
+
+/**
+ * Find the last `session_info` by walking backward from EOF in chunks.
+ *
+ * We stop at the first window that contains one: it abuts the end of the file,
+ * so the last name in it is the file's last name. Chunks are concatenated as
+ * bytes and decoded once, so a character split at a chunk boundary cannot
+ * corrupt the line we are looking for. If the cap is reached first, the head
+ * slice is the only remaining cheap place a name could be.
+ */
+async function scanNameBackward(
+  path: string,
+  size: number,
+  head: string,
+): Promise<string | undefined> {
+  const floor = Math.max(0, size - MAX_NAME_SCAN_BYTES);
+  const chunks: Buffer[] = [];
+  let end = size;
+  while (end > floor) {
+    const start = Math.max(floor, end - NAME_SCAN_CHUNK_BYTES);
+    chunks.unshift(await readRange(path, start, end));
+    const name = findLastName(Buffer.concat(chunks).toString("utf8"));
+    if (name !== undefined) return name;
+    end = start;
+  }
+  return findLastName(head);
 }
 
 /** Iterate complete JSON lines, ignoring a possibly truncated first/last line. */

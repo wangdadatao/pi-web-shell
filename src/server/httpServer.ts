@@ -660,11 +660,11 @@ async function handleEvents(
   // Replay current state on connect: a change that lands between the client's
   // `/api/sessions` fetch and this subscription would otherwise be lost.
   for (const managed of registry.list()) {
-    if (managed.streaming) send({ type: "activity", path: managed.path, running: true });
+    if (managed.streaming) send({ type: "activity", path: managed.path, running: true, reason: "started" });
   }
 
-  const off = registry.onActivity((path, running) => {
-    if (!closed) send({ type: "activity", path, running });
+  const off = registry.onActivity((path, running, reason) => {
+    if (!closed) send({ type: "activity", path, running, reason });
   });
   const heartbeat = setInterval(() => write(": ping\n\n"), SSE_HEARTBEAT_MS);
 }

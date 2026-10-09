@@ -2,7 +2,7 @@ import type { Config } from "./config.ts";
 import { PiRpcSession } from "./piSession.ts";
 import { applyExtensionUiState, emptyExtensionUiState } from "./extensionUi.ts";
 import { normalizeSessionKey } from "./paths.ts";
-import type { ExtensionUiState } from "../shared/types.ts";
+import type { ActivityReason, ExtensionUiState } from "../shared/types.ts";
 
 export interface ManagedSession {
   path: string;
@@ -29,7 +29,7 @@ export interface ManagedSession {
   ui: ExtensionUiState;
 }
 
-type ActivityListener = (path: string, running: boolean) => void;
+type ActivityListener = (path: string, running: boolean, reason: ActivityReason) => void;
 
 /**
  * Keeps one live pi RPC subprocess per opened session.
@@ -207,8 +207,9 @@ export class SessionRegistry {
     this.live.delete(managed.path);
     this.clearIdle(managed);
     // Broadcast before teardown so a subprocess killed mid-run cannot leave a
-    // stale "running" dot behind in every connected client.
-    this.setStreaming(managed, false);
+    // stale "running" dot behind in every connected client. `retired` keeps
+    // this apart from a real finish, so clients do not notify on housekeeping.
+    this.setStreaming(managed, false, "retired");
     await managed.rpc.stop().catch(() => undefined);
   }
 
@@ -251,19 +252,19 @@ export class SessionRegistry {
    */
   private watch(managed: ManagedSession): void {
     managed.rpc.onEvent((event) => {
-      if (event.type === "agent_start") this.setStreaming(managed, true);
-      else if (event.type === "agent_settled") this.setStreaming(managed, false);
+      if (event.type === "agent_start") this.setStreaming(managed, true, "started");
+      else if (event.type === "agent_settled") this.setStreaming(managed, false, "settled");
       else if (event.type === "extension_ui_request") applyExtensionUiState(managed.ui, event);
     });
     managed.rpc.onExit(() => {
       managed.dead = true;
-      this.setStreaming(managed, false);
+      this.setStreaming(managed, false, "exited");
       // Crash with nobody watching? Then there is nothing to keep alive.
       if (managed.refs === 0) void this.retire(managed);
     });
   }
 
-  private setStreaming(managed: ManagedSession, running: boolean): void {
+  private setStreaming(managed: ManagedSession, running: boolean, reason: ActivityReason): void {
     if (managed.streaming === running) return;
     managed.streaming = running;
     if (running) {
@@ -274,7 +275,7 @@ export class SessionRegistry {
     }
     for (const listener of this.activityListeners) {
       try {
-        listener(managed.path, running);
+        listener(managed.path, running, reason);
       } catch (error) {
         process.stderr.write(`[pi-shell] activity listener error: ${String(error)}\n`);
       }

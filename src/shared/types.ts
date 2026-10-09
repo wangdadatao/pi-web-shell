@@ -139,6 +139,17 @@ export interface StreamError {
 export type StreamFrame = StreamSnapshot | StreamEvent | StreamError | StreamStats;
 
 /**
+ * Why a run-state change happened.
+ *
+ * `settled` is a run that reached its end (including an abort), `exited` is a
+ * subprocess that died, and `retired` is the idle reaper / a config change
+ * tearing a warm session down. A client that wants to notify "your background
+ * session finished" must ignore `retired`: that fires on every reaped session
+ * and would turn housekeeping into a notification storm.
+ */
+export type ActivityReason = "started" | "settled" | "exited" | "retired";
+
+/**
  * One frame on the global `/api/events` stream: a session's run state changed.
  *
  * This is the push half of the sidebar's activity indicator. It carries no
@@ -150,6 +161,7 @@ export interface ActivityFrame {
   /** Absolute session file path. */
   path: string;
   running: boolean;
+  reason: ActivityReason;
 }
 
 /** Subset of the `get_state` response we expose to the client. */

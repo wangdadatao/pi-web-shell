@@ -57,6 +57,7 @@ const MESSAGES = {
     "ui.confirm": "确认",
     "ui.ok": "确定",
     "ui.dismiss": "点击关闭",
+    "ui.openSession": "点击打开这个会话",
     "ui.selectTitle": "请选择",
     "ui.confirmTitle": "请确认",
     "ui.inputTitle": "请输入",
@@ -141,6 +142,8 @@ const MESSAGES = {
     "chat.send": "发送",
     "chat.sendFailed": "发送失败：{message}",
     "chat.abortFailed": "停止失败：{message}",
+    "chat.backgroundDone": "「{title}」已跑完（点击查看）",
+    "chat.backgroundFailed": "「{title}」异常结束（点击查看）",
     "chat.switchModel": "切换模型",
     "chat.thinkingLevel": "调整思考等级",
 
@@ -385,6 +388,7 @@ const MESSAGES = {
     "ui.confirm": "Confirm",
     "ui.ok": "OK",
     "ui.dismiss": "Click to dismiss",
+    "ui.openSession": "Click to open this session",
     "ui.selectTitle": "Choose",
     "ui.confirmTitle": "Confirm",
     "ui.inputTitle": "Input",
@@ -469,6 +473,8 @@ const MESSAGES = {
     "chat.send": "Send",
     "chat.sendFailed": "Send failed: {message}",
     "chat.abortFailed": "Could not stop: {message}",
+    "chat.backgroundDone": "“{title}” finished (click to open)",
+    "chat.backgroundFailed": "“{title}” ended unexpectedly (click to open)",
     "chat.switchModel": "Switch model",
     "chat.thinkingLevel": "Adjust thinking level",
 

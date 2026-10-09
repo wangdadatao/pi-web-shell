@@ -28,10 +28,29 @@ interface Fixture {
   root: string;
 }
 
-async function makeFixture(name: string): Promise<Fixture> {
+/**
+ * A fake that speaks just enough of the RPC event stream for the registry's
+ * run-state tracking: it announces `agent_start` and, unless told to hang,
+ * `agent_settled` shortly after. `FAKE_PI_SETTLE_MS=0` keeps it "running" so
+ * the crash and retire paths can be observed mid-run.
+ */
+const ACTIVITY_PI = [
+  "#!/usr/bin/env node",
+  'import { appendFileSync } from "node:fs";',
+  "if (process.env.FAKE_PI_PIDFILE)",
+  '  appendFileSync(process.env.FAKE_PI_PIDFILE, `${process.pid}\\n`);',
+  'const send = (o) => process.stdout.write(JSON.stringify(o) + "\\n");',
+  'send({ type: "agent_start" });',
+  'const ms = Number(process.env.FAKE_PI_SETTLE_MS ?? 150);',
+  'if (ms > 0) setTimeout(() => send({ type: "agent_settled" }), ms);',
+  'process.stdin.on("data", () => undefined);',
+  'process.stdin.on("end", () => process.exit(0));',
+].join("\n");
+
+async function makeFixture(name: string, binSource: string = FAKE_PI): Promise<Fixture> {
   const root = await mkdtemp(join(tmpdir(), `pi-registry-${name}-`));
   const bin = join(root, "fake-pi.mjs");
-  await writeFile(bin, FAKE_PI);
+  await writeFile(bin, binSource);
   await chmod(bin, 0o755);
   const sessionPath = join(root, "session.jsonl");
   await writeFile(sessionPath, "");
@@ -45,6 +64,7 @@ async function makeFixture(name: string): Promise<Fixture> {
 const roots: string[] = [];
 after(async () => {
   delete process.env.FAKE_PI_PIDFILE;
+  delete process.env.FAKE_PI_SETTLE_MS;
   for (const root of roots) await rm(root, { recursive: true, force: true });
 });
 
@@ -120,6 +140,66 @@ describe("SessionRegistry", () => {
     f.registry.release(a);
     f.registry.release(b);
     await f.registry.disposeAll();
+  });
+
+  it("classifies a run's start and finish as started/settled", async () => {
+    const f = await makeFixture("activity-settled", ACTIVITY_PI);
+    roots.push(f.root);
+    delete process.env.FAKE_PI_SETTLE_MS;
+
+    const frames: Array<[string, boolean, string]> = [];
+    f.registry.onActivity((path, running, reason) => frames.push([path, running, reason]));
+
+    const managed = await f.registry.acquire(f.sessionPath, f.root);
+    await waitUntil(() => frames.some(([, running]) => running === false));
+
+    assert.deepEqual(frames[0], [managed.path, true, "started"]);
+    assert.deepEqual(
+      frames.at(-1),
+      [managed.path, false, "settled"],
+      "a finished run must not be reported as a crash or a reap",
+    );
+    await f.registry.disposeAll();
+  });
+
+  it("reports a subprocess that dies mid-run as exited", async () => {
+    const f = await makeFixture("activity-exited", ACTIVITY_PI);
+    roots.push(f.root);
+    // Never settles on its own, so the run is still live when it is killed.
+    process.env.FAKE_PI_SETTLE_MS = "0";
+
+    const frames: Array<[string, boolean, string]> = [];
+    f.registry.onActivity((path, running, reason) => frames.push([path, running, reason]));
+
+    await f.registry.acquire(f.sessionPath, f.root);
+    let pid = 0;
+    await waitUntil(async () => (pid = (await pids(f.pidfile))[0] ?? 0) !== 0);
+    await waitUntil(() => frames.some(([, running]) => running === true));
+
+    // A crash is not a completion: clients must be told `exited` so they can
+    // word the notification differently (and not claim the work succeeded).
+    process.kill(pid, "SIGKILL");
+    await waitUntil(() => frames.some(([, running, reason]) => !running && reason === "exited"));
+    assert.ok(frames.every(([, , reason]) => reason !== "retired"));
+    await f.registry.disposeAll();
+  });
+
+  it("reports a teardown of a live run as retired, not settled", async () => {
+    const f = await makeFixture("activity-retired", ACTIVITY_PI);
+    roots.push(f.root);
+    process.env.FAKE_PI_SETTLE_MS = "0";
+
+    const frames: Array<[string, boolean, string]> = [];
+    f.registry.onActivity((path, running, reason) => frames.push([path, running, reason]));
+
+    const managed = await f.registry.acquire(f.sessionPath, f.root);
+    await waitUntil(() => frames.some(([, running]) => running === true));
+
+    // `retired` is housekeeping (idle reaper, settings save). A client that
+    // notified on it would fire once per reaped session on every config save.
+    await f.registry.disposeAll();
+    assert.deepEqual(frames.at(-1), [managed.path, false, "retired"]);
+    assert.ok(frames.every(([, , reason]) => reason !== "settled"));
   });
 
   it("releases the entry it was handed, not the one that replaced it", async () => {

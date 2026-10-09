@@ -1450,6 +1450,20 @@ body {
   margin-bottom: 0;
 }
 
+/*
+ * Live streaming assembles Markdown from committed chunks plus a re-rendered
+ * tail, so the "first/last child" above lands on a wrapper. Reach through it
+ * only at the two true edges, leaving margins between chunks to collapse
+ * normally.
+ */
+.live-md > :first-child > :first-child {
+  margin-top: 0;
+}
+
+.live-md > .live-tail:last-child > :last-child {
+  margin-bottom: 0;
+}
+
 .md p {
   margin: 9px 0;
 }
@@ -2134,6 +2148,9 @@ button:disabled {
 .toast-info { border-left-color: var(--accent); }
 .toast-warning { border-left-color: var(--warning); }
 .toast-error { border-left-color: var(--danger); }
+
+/* A toast that jumps somewhere, not just a message to dismiss. */
+.toast-action:hover { border-color: var(--accent); }
 
 .ext-status {
   display: flex;

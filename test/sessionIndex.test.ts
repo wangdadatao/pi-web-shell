@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
@@ -11,6 +11,20 @@ function line(entry: unknown): string {
 
 function header(cwd: string, id: string, version = 3): string {
   return line({ type: "session", version, id, timestamp: "2024-12-03T14:00:00.000Z", cwd });
+}
+
+/** ~1KB per entry, to push lines past the reader's fixed windows. */
+function filler(tag: string, count: number): string {
+  let out = "";
+  for (let i = 0; i < count; i += 1) {
+    out += line({
+      type: "message",
+      id: `${tag}${i}`,
+      parentId: null,
+      message: { role: "assistant", content: [{ type: "text", text: "x".repeat(1000) }] },
+    });
+  }
+  return out;
 }
 
 describe("SessionIndex", () => {
@@ -103,12 +117,72 @@ describe("SessionIndex", () => {
     const again = await index.get(target.path);
     assert.equal(again?.title, target.title);
 
-    const { appendFile } = await import("node:fs/promises");
     await appendFile(
       target.path,
       line({ type: "session_info", id: "i9", parentId: "a1", name: "改名了" }),
     );
     const updated = await index.get(target.path);
     assert.equal(updated?.name, "改名了");
+  });
+
+  it("keeps a name that later content buried past the read windows", async () => {
+    const dir = join(root, "--Users-me-buried--");
+    await mkdir(dir, { recursive: true });
+    const path = join(dir, "2024-12-05T10-00-00-000Z_buried.jsonl");
+    await writeFile(
+      path,
+      header("/Users/me/buried", "buried") +
+        line({ type: "message", id: "u1", parentId: null, message: { role: "user", content: "原始标题" } }) +
+        filler("a", 300) + // pushes the rename past the 256KB head window
+        line({ type: "session_info", id: "i1", parentId: "a299", name: "埋在中间的名字" }) +
+        filler("b", 200), // and past the 128KB tail window
+    );
+
+    // A fresh index has no cache to lean on, so this is the cold backward scan.
+    const summary = await new SessionIndex(root).get(path);
+    assert.equal(summary?.name, "埋在中间的名字");
+    assert.equal(summary?.title, "埋在中间的名字");
+  });
+
+  it("finds a rename appended after a previous scan", async () => {
+    const dir = join(root, "--Users-me-incremental--");
+    await mkdir(dir, { recursive: true });
+    const path = join(dir, "2024-12-06T10-00-00-000Z_inc.jsonl");
+    await writeFile(
+      path,
+      header("/Users/me/incremental", "inc") +
+        line({ type: "message", id: "u1", parentId: null, message: { role: "user", content: "原始标题" } }) +
+        filler("a", 300) +
+        line({ type: "session_info", id: "i1", parentId: "a299", name: "第一个名字" }),
+    );
+
+    const incIndex = new SessionIndex(root);
+    const first = await incIndex.get(path);
+    assert.equal(first?.name, "第一个名字");
+
+    await appendFile(
+      path,
+      filler("b", 200) +
+        line({ type: "session_info", id: "i2", parentId: "b199", name: "后来的名字" }),
+    );
+    const updated = await incIndex.get(path);
+    assert.equal(updated?.name, "后来的名字");
+    assert.equal(updated?.title, "后来的名字");
+  });
+
+  it("falls back to the first message for a large, never-renamed file", async () => {
+    const dir = join(root, "--Users-me-unnamed--");
+    await mkdir(dir, { recursive: true });
+    const path = join(dir, "2024-12-07T10-00-00-000Z_unnamed.jsonl");
+    await writeFile(
+      path,
+      header("/Users/me/unnamed", "unnamed") +
+        line({ type: "message", id: "u1", parentId: null, message: { role: "user", content: "没有名字" } }) +
+        filler("a", 500),
+    );
+
+    const summary = await new SessionIndex(root).get(path);
+    assert.equal(summary?.name, undefined);
+    assert.equal(summary?.title, "没有名字");
   });
 });
