@@ -1226,14 +1226,25 @@ function renderFolders() {
   }
   for (const folder of state.folders) {
     const runningCount = state.sessions.filter((s) => s.cwd === folder.cwd && s.running).length;
+    // A folder is the only place an unread finish is visible when the session
+    // lives in another folder than the one being viewed.
+    const doneCount = state.sessions.filter(
+      (s) => s.cwd === folder.cwd && !s.running && state.unreadDone.has(s.path),
+    ).length;
     const node = document.createElement("div");
-    node.className = `item folder${folder.cwd === state.cwd ? " active" : ""}${runningCount ? " running" : ""}`;
+    node.className = `item folder${folder.cwd === state.cwd ? " active" : ""}${runningCount ? " running" : ""}${doneCount ? " unread" : ""}`;
     const dot = runningCount
       ? `<span class="run-dot" title="${t("sidebar.folderRunning", { count: runningCount })}"></span>`
-      : "";
-    const active = runningCount
-      ? `<span class="running-text">${t("sidebar.folderRunningSuffix", { count: runningCount })}</span>`
-      : "";
+      : doneCount
+        ? `<span class="done-dot" title="${t("sidebar.folderFinished", { count: doneCount })}"></span>`
+        : "";
+    const active =
+      (runningCount
+        ? `<span class="running-text">${t("sidebar.folderRunningSuffix", { count: runningCount })}</span>`
+        : "") +
+      (doneCount
+        ? `<span class="done-text">${t("sidebar.folderFinishedSuffix", { count: doneCount })}</span>`
+        : "");
     node.innerHTML = `<div class="name" title="${esc(folder.cwd)}">${dot}${esc(shortPath(folder.cwd))}</div>
       <div class="sub">${t("sidebar.folderSub", { count: folder.sessionCount, time: relativeTime(folder.lastActivity) })}${active}</div>
       <div class="item-actions">
@@ -1261,15 +1272,23 @@ function renderSessions() {
     return;
   }
   for (const session of list) {
+    // Running supersedes a stale unread mark: a new run clears it above.
+    const unread = !session.running && state.unreadDone.has(session.path);
     const node = document.createElement("div");
-    node.className = `item session${session.path === state.path ? " active" : ""}${session.pending ? " pending" : ""}${session.running ? " running" : ""}`;
+    node.className = `item session${session.path === state.path ? " active" : ""}${session.pending ? " pending" : ""}${session.running ? " running" : ""}${unread ? " unread" : ""}`;
     const badge = session.pending ? `<span class="badge">${t("session.badgeNew")}</span>` : "";
-    const dot = session.running ? `<span class="run-dot" title="${t("session.running")}"></span>` : "";
+    const dot = session.running
+      ? `<span class="run-dot" title="${t("session.running")}"></span>`
+      : unread
+        ? `<span class="done-dot" title="${t("session.finished")}"></span>`
+        : "";
     const sub = session.pending
       ? t("session.pending")
       : session.running
         ? `<span class="running-text">${t("session.runningNow")}</span> · ${relativeTime(session.updatedAt)}`
-        : relativeTime(session.updatedAt);
+        : unread
+          ? `<span class="done-text">${t("session.finished")}</span> · ${relativeTime(session.updatedAt)}`
+          : relativeTime(session.updatedAt);
     node.innerHTML = `<div class="name" title="${esc(session.title)}">${dot}${esc(session.title)}${badge}</div>
       <div class="sub">${sub}</div>
       <div class="item-actions">
@@ -2567,8 +2586,19 @@ function openActivityStream() {
     } catch {
       return;
     }
-    if (frame.type === "activity") applyActivity(frame.path, frame.running);
+    if (frame.type === "activity") handleActivityFrame(frame);
   };
+}
+
+/**
+ * Apply one `/api/events` frame.
+ *
+ * Kept separate from `openActivityStream` so the UI test can push frames
+ * through the real `type/path/running/reason` contract instead of calling
+ * `applyActivity` directly — that shortcut once hid a dropped `reason` here.
+ */
+function handleActivityFrame(frame) {
+  applyActivity(frame.path, frame.running, frame.reason);
 }
 
 function applyActivity(path, running, reason) {
@@ -2590,7 +2620,12 @@ function applyActivity(path, running, reason) {
       showToast(
         t(failed ? "chat.backgroundFailed" : "chat.backgroundDone", { title: session.title }),
         failed ? "error" : "info",
-        () => openSession(session),
+        () => {
+          // Jumping to a session from the settings page must also leave it,
+          // or the transcript opens out of sight behind the settings view.
+          if (state.view === "settings") closeSettings();
+          openSession(session);
+        },
       );
     }
   }
@@ -2616,7 +2651,10 @@ function applyDocumentTitle() {
   const base = state.extension.title
     ? `${state.extension.title} \u00b7 ${state.defaultTitle}`
     : state.defaultTitle;
-  document.title = state.unreadDone.size > 0 ? `(${state.unreadDone.size}) ${base}` : base;
+  // Count against the live session list, not the raw set: a session deleted (or
+  // rotated away) elsewhere would otherwise leave the badge stuck one too high.
+  const count = state.sessions.filter((s) => state.unreadDone.has(s.path)).length;
+  document.title = count > 0 ? `(${count}) ${base}` : base;
 }
 
 /* ------------------------------------------------------------------ *
@@ -3902,6 +3940,7 @@ globalThis.piShellDebug = {
   openLightbox,
   closeLightbox,
   applyActivity,
+  handleActivityFrame,
   markAborted,
   setTheme,
   setLanguage,

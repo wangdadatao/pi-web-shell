@@ -1069,6 +1069,25 @@ body {
   color: var(--ok);
 }
 
+/* A run that finished while you were looking somewhere else. */
+.done-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 6px;
+  border-radius: 50%;
+  vertical-align: 1px;
+  background: var(--accent);
+}
+
+.done-text {
+  color: var(--accent);
+}
+
+.item.session.unread .name {
+  font-weight: 600;
+}
+
 .item .sub {
   font-size: 11px;
   color: var(--muted);
