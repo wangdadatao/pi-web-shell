@@ -150,12 +150,18 @@ const api = {
     if (!res.ok) throw new Error(t("api.treeFailed", { status: res.status }));
     return res.json();
   },
-  /** Fork a new branch from a past user message. */
-  async fork(path, entryId) {
+  /**
+   * Fork a new branch from a past user message.
+   *
+   * `target` is `{ entryId }` (the tree panel knows the id) or `{ fromEnd }`
+   * (the transcript counts user messages back from the last one, because the
+   * model-facing messages carry no entry ids).
+   */
+  async fork(path, target) {
     const res = await fetch("/api/fork", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path, entryId }),
+      body: JSON.stringify({ path, ...target }),
     });
     if (res.status === 404) throw new Error(t("api.serverOutdated"));
     const data = await res.json().catch(() => ({}));
@@ -324,6 +330,15 @@ const state = {
   unreadDone: new Set(),
   /** Paths whose finish the user asked for (clicked stop): not news to them. */
   abortedPaths: new Set(),
+  /** Pending `waitForIdle` resolvers, fired on the next `agent_settled`. */
+  settleWaiters: new Set(),
+  /** Wall-clock ms the current turn's user message was sent; 0 when idle. */
+  turnStartMs: 0,
+  /** Input/output tokens so far this turn (all rounds), for the footer. */
+  turnInput: 0,
+  turnOutput: 0,
+  /** Bubble + usage of the latest assistant text reply, for the footer stats. */
+  lastReply: null,
   /**
    * Extension UI state (`setStatus` / `setWidget` / `setTitle`). Keyed maps, not
    * a single value: several extensions can own distinct keys, and a session
@@ -672,13 +687,57 @@ function renderToolChip(name, args, isError, open, resultContent) {
   return `<details class="tool-chip${isError ? " error" : ""}"${open ? " open" : ""}><summary class="tool-name">${label}</summary>${body}</details>`;
 }
 
-function messageNode(role, content) {
+/**
+ * Bottom action row for one message. Icon-only, and CSS floats it just below
+ * the bubble with `position: absolute`, so it never adds height to the bubble
+ * (an `opacity: 0` row *inside* the bubble made every message taller).
+ *
+ * No index is baked in: "which user message" is only knowable at click time,
+ * because a message sent after this one rendered would make a stored index
+ * point at the wrong entry. The click handler counts the user bubbles itself.
+ */
+function userActions(timestamp) {
+  const time = timestamp ? `<span class="msg-meta msg-time">${esc(fmtClock(timestamp))}</span>` : "";
+  return (
+    `<div class="msg-actions">${time}` +
+    `<button class="msg-act" type="button" data-msg-action="edit" title="${esc(t("msg.editResend"))}" aria-label="${esc(t("msg.editResend"))}">✎</button>` +
+    `<button class="msg-act danger" type="button" data-msg-action="delete" title="${esc(t("msg.deleteResend"))}" aria-label="${esc(t("msg.deleteResend"))}">🗑</button>` +
+    `<button class="msg-act" type="button" data-copy="message" title="${esc(t("common.copyMessage"))}" aria-label="${esc(t("common.copyMessage"))}">📋</button>` +
+    `</div>`
+  );
+}
+
+/** Copy moved out of the bubble head; the per-reply stats trail it. */
+function assistantActions(meta) {
+  return (
+    `<div class="msg-actions">` +
+    `<button class="msg-act" type="button" data-copy="message" title="${esc(t("common.copyMessage"))}" aria-label="${esc(t("common.copyMessage"))}">📋</button>` +
+    (meta ? metaHtml(meta) : "") +
+    `</div>`
+  );
+}
+
+/** "用时 12.3s · 输入 11.7k / 输出 40.8k · 2026-10-09 17:32:21", minus unknowns. */
+function metaHtml(meta) {
+  const parts = [];
+  if (Number.isFinite(meta.durationMs)) parts.push(`${t("msg.replyDuration")} ${fmtDuration(meta.durationMs)}`);
+  if (Number.isFinite(meta.input) && Number.isFinite(meta.output)) {
+    parts.push(t("msg.replyTokens", { input: fmtTokens(meta.input), output: fmtTokens(meta.output) }));
+  }
+  if (meta.endMs) parts.push(fmtClock(meta.endMs));
+  const visible = parts.filter(Boolean);
+  if (visible.length === 0) return "";
+  return `<span class="msg-meta" title="${esc(t("msg.replyMetaTitle"))}">${visible.map(esc).join(" · ")}</span>`;
+}
+
+function messageNode(role, content, opts = {}) {
   const node = document.createElement("div");
-  node.className = `msg ${role}`;
+  node.className = `msg ${role}${opts.isLast ? " is-last" : ""}`;
   if (role === "user") {
-    node.innerHTML = `<div class="role-tag">${t("msg.you")}</div>${renderContent(content)}`;
+    node.innerHTML =
+      `<div class="role-tag">${t("msg.you")}</div>${renderContent(content)}${userActions(opts.timestamp)}`;
   } else if (role === "assistant") {
-    node.innerHTML = `${assistantHead()}${renderContent(content)}`;
+    node.innerHTML = `${assistantHead()}${renderContent(content)}${assistantActions(opts.meta ?? null)}`;
   } else {
     node.innerHTML = renderContent(content);
   }
@@ -686,17 +745,21 @@ function messageNode(role, content) {
 }
 
 function assistantHead() {
-  return (
-    `<div class="msg-head"><span class="role-tag">pi</span>` +
-    `<button class="copy-btn" type="button" data-copy="message" aria-label="${t("common.copyMessage")}">${t("common.copy")}</button></div>`
-  );
+  return `<div class="msg-head"><span class="role-tag">pi</span></div>`;
 }
 
 function addMessage(msg) {
   const role = msg && msg.role ? msg.role : "notice";
   if (role === "system") return;
   closeToolGroup();
-  el.messages.appendChild(messageNode(role, msg.content));
+  // The reply that was "last" is not any more: drop its always-on footer so it
+  // cannot float over the message we are about to add (it stays on hover).
+  for (const node of el.messages.querySelectorAll(".msg.assistant.is-last")) node.classList.remove("is-last");
+  // A just-sent message is the newest, so it is 0 back from the end; earlier
+  // bubbles keep their own count from the render pass.
+  el.messages.appendChild(
+    messageNode(role, msg.content, role === "user" ? { timestamp: msg.timestamp ?? Date.now() } : {}),
+  );
 }
 
 // ------------------------------------------------------------ tool grouping
@@ -808,13 +871,61 @@ function renderToolResult(msg) {
   return `<details class="tool-result"><summary>${t("msg.toolResult", { name })}${msg.isError ? t("msg.errorSuffix") : ""}</summary>${renderToolResultContent(msg.content)}</details>`;
 }
 
+/** Fresh (non-cached) input and generated output of one assistant message. */
+function usageTokens(message) {
+  const usage = message && message.usage ? message.usage : null;
+  return {
+    input: usage && typeof usage.input === "number" ? usage.input : 0,
+    output: usage && typeof usage.output === "number" ? usage.output : 0,
+  };
+}
+
+/**
+ * Per-reply footer stats.
+ *
+ * `input` / `output` are the **whole turn's** totals, summed over every
+ * assistant message between the user prompt and the end — a tool-heavy turn is
+ * dozens of model calls, so the final message alone under-reports badly (a real
+ * turn: last message 575, whole turn 40,839). Duration and end time come from
+ * wall-clock timestamps.
+ */
+function replyMeta(startMs, message, input, output) {
+  const endMs = message && typeof message.timestamp === "number" ? message.timestamp : 0;
+  return {
+    durationMs: startMs && endMs && endMs >= startMs ? endMs - startMs : NaN,
+    input: Number.isFinite(input) ? input : NaN,
+    output: Number.isFinite(output) ? output : NaN,
+    endMs,
+  };
+}
+
 /** Render a stored transcript, grouping consecutive tool activity. */
 function renderHistory(messages) {
   state.toolGroup = null;
   state.toolEntryIndex = new Map();
-  for (const msg of messages) {
+  state.lastReply = null;
+  // Only the final text reply keeps its stats visible; older ones reveal them
+  // on hover. The last message has nothing below it, so it cannot overlap.
+  let lastTextIndex = -1;
+  messages.forEach((m, i) => {
+    if (m && m.role === "assistant" && splitAssistant(m.content).hasText) lastTextIndex = i;
+  });
+  let turnStartMs = 0;
+  let turnInput = 0;
+  let turnOutput = 0;
+  for (let index = 0; index < messages.length; index += 1) {
+    const msg = messages[index];
     const role = msg && msg.role ? msg.role : "notice";
     if (role === "system") continue;
+
+    if (role === "user") {
+      closeToolGroup();
+      turnStartMs = typeof msg.timestamp === "number" ? msg.timestamp : 0;
+      turnInput = 0;
+      turnOutput = 0;
+      el.messages.appendChild(messageNode("user", msg.content, { timestamp: msg.timestamp }));
+      continue;
+    }
 
     if (role === "toolResult") {
       // Fold the output back into the call that produced it, so one tool call
@@ -835,10 +946,19 @@ function renderHistory(messages) {
     }
 
     if (role === "assistant") {
+      // Every round of the turn counts, not just the one that produced text.
+      const round = usageTokens(msg);
+      turnInput += round.input;
+      turnOutput += round.output;
       const { prose, tools, hasText } = splitAssistant(msg.content);
       if (hasText) {
         closeToolGroup();
-        el.messages.appendChild(messageNode("assistant", prose));
+        el.messages.appendChild(
+          messageNode("assistant", prose, {
+            meta: replyMeta(turnStartMs, msg, turnInput, turnOutput),
+            isLast: index === lastTextIndex,
+          }),
+        );
       } else {
         for (const block of prose) {
           if (block && block.type === "thinking") addToolEntry(renderThinking(block.thinking || "", false), null);
@@ -1038,11 +1158,100 @@ function countTreeEntries(node) {
   return total;
 }
 
+/**
+ * Edit / delete a user message and resend: pi's own "go back to before this
+ * message" move (the `/tree` select-then-submit flow), driven from the bubble
+ * instead of the branch panel. It is a fork, not an in-place delete: the
+ * abandoned text stays in the session file as a side branch, it just stops
+ * being part of the context the model sees.
+ */
+async function forkFromTranscript(fromEnd, edit, hasImages) {
+  if (!state.path) return;
+  const path = state.path;
+  try {
+    // Forking mid-run would tear the agent down under an in-flight turn; stop
+    // first and let it settle so the branch point is stable.
+    if (state.streaming) {
+      await api.abort(path);
+      await waitForIdle();
+    }
+    const result = await api.fork(path, { fromEnd });
+    if (result.cancelled) {
+      addNotice(t("tree.forkCancelled"));
+      return;
+    }
+    // The active branch moved; the snapshot (and transcript) must follow.
+    await followFork(result);
+    if (edit) {
+      el.input.value = typeof result.text === "string" ? result.text : "";
+      autoGrow();
+      addNotice(hasImages ? t("msg.editedNoImages") : t("msg.edited"));
+    } else {
+      addNotice(t("msg.deleted"));
+    }
+    el.input.focus();
+  } catch (error) {
+    addNotice(t("common.error", { message: error.message }), "error");
+  }
+}
+
+/**
+ * Point the tab at the branch the fork actually left us on.
+ *
+ * Usually that is the same session file (the leaf just moved). But forking the
+ * very first message has no parent to rewind to, so pi re-roots into a **new**
+ * session file; ignoring that would leave the tab writing the old file under
+ * the old name.
+ */
+async function followFork(result) {
+  if (!result || !result.sessionFile) {
+    refreshActiveSession();
+    return;
+  }
+  await refreshSessionList();
+  let next = state.sessions.find((s) => s.path === result.sessionFile);
+  if (!next) {
+    // The fork just wrote the file; the index can lag a beat behind. Build a
+    // summary with every field the sidebar reads (title/pending/running/
+    // updatedAt) and insert it, so the row renders instead of flickering.
+    next = {
+      path: result.sessionFile,
+      cwd: state.cwd,
+      title: t("chat.newSessionTitle"),
+      updatedAt: new Date().toISOString(),
+      pending: false,
+      running: false,
+    };
+    state.sessions.push(next);
+    renderSessions();
+  }
+  openSession(next);
+}
+
+/** Resolve every pending `waitForIdle` (settle, timeout, or session switch). */
+function resolveSettleWaiters() {
+  for (const waiter of state.settleWaiters) waiter();
+  state.settleWaiters.clear();
+}
+
+function waitForIdle(timeoutMs = 5000) {
+  if (!state.streaming) return Promise.resolve();
+  return new Promise((resolve) => {
+    const done = () => {
+      clearTimeout(timer);
+      state.settleWaiters.delete(done);
+      resolve();
+    };
+    const timer = setTimeout(done, timeoutMs);
+    state.settleWaiters.add(done);
+  });
+}
+
 async function forkFrom(entryId, button) {
   if (!state.path) return;
   button.disabled = true;
   try {
-    const result = await api.fork(state.path, entryId);
+    const result = await api.fork(state.path, { entryId });
     closeTreePanel();
     if (result.cancelled) {
       addNotice(t("tree.forkCancelled"));
@@ -1051,7 +1260,7 @@ async function forkFrom(entryId, button) {
     addNotice(t("tree.forked"));
     // The active branch changed under us; re-attach the stream so the
     // snapshot (and the transcript) reflect the forked branch.
-    refreshActiveSession();
+    await followFork(result);
   } catch (error) {
     button.disabled = false;
     addNotice(t("common.error", { message: error.message }), "error");
@@ -1122,6 +1331,29 @@ function splitHome(cwd) {
     return { prefix: "~", rest: cwd.slice(home.length).replace(/^\//, "") };
   }
   return { prefix: "", rest: cwd.replace(/^\//, "") };
+}
+
+/** Local wall clock, "YYYY-MM-DD HH:mm:ss", from Unix ms or an ISO string. */
+function fmtClock(value) {
+  const ms = typeof value === "string" ? Date.parse(value) : Number(value);
+  const date = new Date(ms);
+  if (!Number.isFinite(date.getTime())) return "";
+  const pad = (n) => String(n).padStart(2, "0");
+  return (
+    `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ` +
+    `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+  );
+}
+
+/** "12.3s" under a minute, "2m05s" beyond. Unmeasurable stays empty. */
+function fmtDuration(ms) {
+  if (!Number.isFinite(ms) || ms < 0) return "";
+  const seconds = ms / 1000;
+  if (seconds < 60) return `${seconds.toFixed(1)}s`;
+  // Round the total before splitting it: rounding the remainder alone turns
+  // 119.6s into "1m60s".
+  const total = Math.round(seconds);
+  return `${Math.floor(total / 60)}m${String(total % 60).padStart(2, "0")}s`;
 }
 
 function relativeTime(iso) {
@@ -1325,6 +1557,12 @@ function closeStream() {
   state.loadTimer = null;
   stopStatsTicker();
   state.streaming = false;
+  // A wait that outlives its session would hang the click that started it.
+  resolveSettleWaiters();
+  state.turnStartMs = 0;
+  state.turnInput = 0;
+  state.turnOutput = 0;
+  state.lastReply = null;
   state.live = null;
   state.toolGroup = null;
   state.toolEntryIndex = new Map();
@@ -1494,6 +1732,11 @@ function handleEvent(event) {
   switch (event.type) {
     case "agent_start":
       state.streaming = true;
+      // A new turn: forget the previous turn's final bubble so its stats are not
+      // re-applied if this one ends without ever producing text.
+      state.lastReply = null;
+      state.turnInput = 0;
+      state.turnOutput = 0;
       // Wait for the first delta before starting the clock: request latency is not
       // decode time, so it must not dilute the rate.
       resetSpeed();
@@ -1513,6 +1756,10 @@ function handleEvent(event) {
       break;
     case "message_end":
       if (event.message && event.message.role === "assistant") {
+        // Every round contributes to the turn's totals, not just the last.
+        const round = usageTokens(event.message);
+        state.turnInput += round.input;
+        state.turnOutput += round.output;
         // The final message carries authoritative usage even when no stream event
         // did, so prefer it before freezing the rate for this message.
         const out = event.message.usage?.output;
@@ -1561,6 +1808,24 @@ function handleEvent(event) {
       stopStatsTicker();
       renderStats();
       setStatus("idle");
+      // The turn is over: put the stats footer on its final text reply (and only
+      // that one stays expanded; the next send drops `is-last`).
+      if (state.lastReply && state.lastReply.node.isConnected) {
+        const { node, message } = state.lastReply;
+        const actions = node.querySelector(".msg-actions");
+        if (actions) {
+          actions.outerHTML = assistantActions(
+            replyMeta(state.turnStartMs, message, state.turnInput, state.turnOutput),
+          );
+        }
+        node.classList.add("is-last");
+      }
+      state.lastReply = null;
+      state.turnStartMs = 0;
+      state.turnInput = 0;
+      state.turnOutput = 0;
+      // Anyone waiting to fork (edit/delete) can go ahead now.
+      resolveSettleWaiters();
       refreshSessionList();
       break;
     default:
@@ -1908,8 +2173,11 @@ function finalizeAssistant(message) {
   if (hasText) {
     const node = ensureLive();
     node.classList.remove("streaming");
-    node.innerHTML = `${assistantHead()}${renderContent(prose)}`;
+    node.innerHTML = `${assistantHead()}${renderContent(prose)}${assistantActions(null)}`;
     closeToolGroup();
+    // Remembered until `agent_settled`: that is when the turn (and its clock)
+    // is really over, and when the footer stats can be filled in.
+    state.lastReply = { node, message };
   } else if (state.live) {
     // Thinking-only turn: fold the streamed thinking into the activity group
     // instead of leaving an otherwise empty bubble behind.
@@ -2291,6 +2559,21 @@ function messageText(node) {
 }
 
 async function handleMessagesClick(event) {
+  const action = event.target.closest("[data-msg-action]");
+  if (action) {
+    const bubble = action.closest(".msg");
+    // Count back from the newest *now*, not at render time: a message sent
+    // after this bubble rendered would make a stored index point at the wrong
+    // entry (the server resolves the index against the live active branch).
+    const bubbles = [...el.messages.querySelectorAll(".msg.user")];
+    const index = bubble ? bubbles.indexOf(bubble) : -1;
+    if (index < 0) return;
+    // `fork` returns text only; images cannot ride along.
+    const hasImages = Boolean(bubble.querySelector("img"));
+    await forkFromTranscript(bubbles.length - 1 - index, action.dataset.msgAction === "edit", hasImages);
+    return;
+  }
+
   const placeholder = event.target.closest(".image-placeholder");
   if (placeholder) {
     revealToolImage(placeholder);
@@ -2305,7 +2588,7 @@ async function handleMessagesClick(event) {
     return;
   }
 
-  const button = event.target.closest(".copy-btn");
+  const button = event.target.closest("[data-copy]");
   if (!button) return;
   const kind = button.dataset.copy;
   let text = "";
@@ -2319,17 +2602,24 @@ async function handleMessagesClick(event) {
   }
   if (!text) return;
 
+  // Icon-only buttons must keep their shape; swapping in "copied" text would
+  // bounce the row. They flash ✓/✗ instead and restore the glyph.
+  const iconOnly = button.classList.contains("msg-act");
   const original = button.textContent;
+  const originalTitle = button.title;
   try {
     await copyTextToClipboard(text);
-    button.textContent = t("common.copied");
+    button.textContent = iconOnly ? "✓" : t("common.copied");
+    button.title = t("common.copied");
     button.classList.add("copied");
   } catch {
-    button.textContent = t("common.copyFailed");
+    button.textContent = iconOnly ? "✗" : t("common.copyFailed");
+    button.title = t("common.copyFailed");
     button.classList.add("failed");
   }
   setTimeout(() => {
     button.textContent = original;
+    button.title = originalTitle;
     button.classList.remove("copied", "failed");
   }, 1200);
 }
@@ -2414,7 +2704,8 @@ async function sendMessage() {
   }));
   if (!text && images.length === 0) return;
 
-  addMessage({ role: "user", content: text ? renderUserContent(text, images) : images });
+  state.turnStartMs = Date.now();
+  addMessage({ role: "user", content: text ? renderUserContent(text, images) : images, timestamp: state.turnStartMs });
   // The bubble is appended below the current viewport; without this the user's
   // own words stay out of sight until the first assistant delta scrolls again.
   scrollToEnd();
@@ -3941,12 +4232,15 @@ globalThis.piShellDebug = {
   closeLightbox,
   applyActivity,
   handleActivityFrame,
+  handleSnapshot,
   markAborted,
   setTheme,
   setLanguage,
   applyTheme,
   currentSpeed,
   estimateTokens,
+  fmtDuration,
+  fmtClock,
   fmtTokens,
   fmtCost,
   messageText,

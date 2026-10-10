@@ -120,7 +120,7 @@ pi 只有在第一条消息时才会把会话写盘。所以新建会话后 `get
 | GET | `/api/stream?path=<file>` | SSE：先发 `snapshot`（state + messages + stats），后转发实时事件。响应 gzip |
 | GET | `/api/events` | SSE：全局会话运行态。每帧 `{type:"activity", path, running, reason}`，连接时先补发当前运行中的会话。与具体会话无关，所以没打开该会话也能收到 |
 | GET | `/api/tree?path=<file>` | 代理 `get_tree`，再经 `treeView.ts` 瘦身成面板要的 `{ nodes, leafId }`（只有 id/kind/preview/label/active） |
-| POST | `/api/fork` | `{ path, entryId }` → `fork`；返回 `{ ok, cancelled, text }` |
+| POST | `/api/fork` | `{ path, entryId }` 或 `{ path, fromEnd }` → `fork`；返回 `{ ok, cancelled, text, entryId, sessionFile }`。`fromEnd` 用于内联编辑/删除（快照里的消息没有 entry id） |
 | POST | `/api/clone` | `{ path }` → `clone`，再 `get_state` 补回副本路径；子进程若切了文件就 dispose 它防漂移 |
 | GET | `/api/image/<sha1>` | 快照里的图片字节，内容寻址 + `immutable` 缓存 |
 | GET | `/api/local-image?path=<abs>` | 正文 Markdown 引用的本地图；魔数嗅探只放行 PNG/JPEG/GIF/WEBP，ETag 用 size+mtime |
@@ -133,7 +133,7 @@ pi 只有在第一条消息时才会把会话写盘。所以新建会话后 `get
 | GET | `/api/commands?path=<file>` | `get_commands` 精简后的命令表，供 `/` 菜单用 |
 | GET | `/api/settings/usage` | 全部会话的 token / 花费汇总（只读，见下） |
 | GET | `/api/settings/environment` | pi 会加载什么 + 可写白名单 + 本服务运行参数（见下） |
-| POST | `/api/settings/save` | 白名单补丁 `{点分键: 值|null}`；校验失败 400，写成功后 `disposeAll()` |
+| POST | `/api/settings/save` | 白名单补丁 `{点分键: 值|null}`；校验失败 400；写成功后**不回收任何子进程**（见下「为什么设置保存不回收」） |
 | POST | `/api/settings/agents-md` | `{ content }` → 重写 AGENTS.md（备份 + 原子写），之后 `disposeAll()` |
 | POST | `/api/settings/mcp` | `{ name, enabled }` → 按 pi 的写法改 mcp.json 条目的 `enabled`，之后 `disposeAll()` |
 | GET | `/` | 静态前端（`src/web`）；`/settings` 回落到同一个 `index.html`，其他路径不回落（打错的资源仍 404） |
@@ -321,8 +321,57 @@ pi 的会话是 append-only 的树：每条 entry 带 `parentId`，当前叶子�
 以首子链代替主干）。展开态存在 `state.treeExpanded`，重渲染不丢。
 
 两个动作直接转发官方 RPC：`fork(entryId)`（从某条用户消息分叉）与 `clone`（复制整条会话）。
-`clone` 不回新文件路径，所以补一发 `get_state` 去拿；若子进程已经切到了副本文件，
-就把它 dispose 掉——否则「标签页显示的会话」与「子进程正在写的文件」会分叉。
+
+**关键事实：RPC 的 `fork` 每次都新建一个 session 文件**（`createBranchedSession` 把 active path
+拷贝到新文件，`parentSession` 指回原文件），不是在原文件里就地开分支——官方 `/tree` 的就地
+导航没有 RPC 入口。但 `fork` 的 response 只回 `text`，**不回新路径**，所以 `/api/fork`、`/api/clone`
+都要补一发 `get_state` 拿 `sessionFile`：
+
+- `clone` 把副本当新会话，原标签页继续看原文件 → 把切走的子进程 `dispose` 掉，下次 acquire 重新
+  spawn 在原文件上。
+- `fork`（分叉、以及内联编辑/删除）则**切到新文件**：返回 `sessionFile` 给前端，前端 `refreshSessionList()`
+  再 `openSession(新路径)`。不这么做，标签页会继续拿着一个「已经在写别的文件」的子进程，
+  标题/路径与实际内容对不上。
+
+### 内联「编辑 / 删除重发」
+
+用户消息气泡悬停下出三个**纯图标**按钮（✎ 编辑 / 🗑 删除 / 📋 复制，文案只在 `title` 里），
+编辑与删除就是 pi 官方的「回到这条之前再重发」（`/tree` 选中→改→提交）的
+RPC 版：
+
+- `fork` 只接受 **user 消息**，语义是「把叶子回退到它的 `parentId` 并返回它的文本」。
+  所以「编辑」= fork + 把 text 填回输入框，「删除」= fork + 不填。被丢掉的旧内容**并未删除**，
+  只是不再是活动分支（旧 session 文件保留在侧栏）。
+- 快照里的消息来自 `get_messages`，**不带 entry id**；而 `get_fork_messages` 不做分支过滤。
+  所以前端发「倒数第 N 条 user 消息」（`fromEnd`），服务端用 `treeView.activeUserEntryIds()`
+  从 `leafId` 沿 `parentId` 走出活动分支的用户消息再取第 N 条。从**末尾对齐**是安全的：
+  压缩只会丢掉旧消息、不会重排，所以尾部总是对得上。
+- `fromEnd` **在点击时才算**，不能用渲染时写进 `data-*` 的值——期间新发一条消息就会指错 entry。
+- 运行中点编辑/删除会先 `abort` 并等 `agent_settled`（`waitForIdle`），否则会在飞行中的一轮
+  底下把 agent 拆了。
+- `fork` 只回文本，**图片不回来**：带图的消息会额外提示「图片不会自动带回」。
+
+同一条动作行还兼顾时间与统计（M2.21.1）：
+
+- 用户气泡 hover 时行首是**发送时间**（`message.timestamp`，本地 `YYYY-MM-DD HH:mm:ss`）。
+- 助手气泡的复制按钮从右上角移到这里，**最后一条回复**的统计行常驻：
+  `用时 · ↑input ↓output · 结束时间`（箭头与底部统计条同一口径），数据来自消息自带的 `usage.input`/`usage.output` 与
+  `timestamp`；**input/output 是整轮累加**——带工具的一轮是几十次模型调用，只取最后一条会
+  严重偏小（实测 575 vs 40,839）；用时 = 该轮用户消息 ts → 回复 ts（直播时用客户端记的 `turnStartMs`）。
+  只有最后一条常驻——它后面没有消息，绝对定位的浮动行不会压到别的气泡；旧回复 hover 才显示。
+- 行本身是 `position: absolute; top: calc(100% + 1px)`：不占高、不撑气泡，
+  hover 过渡区用 `padding` 不用 `margin`（margin 会在气泡与按钮之间留一段死区，
+  鼠标下移时 `:hover` 断掉、按钮闪）。
+
+### 一个被测试盲区掩盖的真 bug（M2.21 修）
+
+`treeView.convert` 一直从 entry 顶层读 `role`/`content`，但 pi 的 entry 是
+`{type:"message", id, parentId, timestamp, message:{role, content}}`——role/content 在 `message` 里。
+后果是**每个节点都被当成 assistant、预览全是「…」，用户节点永远没有「从这里分叉」按钮**。
+UI 测试 stub 的是已经重塑好的 payload、单测的 fixture 又把 role/content 放在顶层，
+两边都刚好绕过了真实形状。修法：从 `entry.message` 读，并按 CLI 的默认视图
+隐掉 system 消息与 `usage/model_change/thinking_level_change/...` 这些簿记 entry——
+隐掉时**子节点上提**（hoist），否则夹在中间的簿记节点会把后面整条分支吞掉。
 
 图片查看是顺手加的同层交互：`#messages` 里任意图片（正文本地图、工具截图占位符）点击都
 在应用内 lightbox 打开全图，Esc 或点遮罩关闭，不再依赖开新标签页。
@@ -416,8 +465,17 @@ pi 扩展可以通过 `extension_ui_request` 向宿主弹对话框（`select` / 
   中途崩掉不会留下半个文件。文件存在但 JSON 解析失败时**拒绝覆写**，不当成「文件不存在」继续。
 - AGENTS.md 与 mcp.json 走同一条 `backupAndWrite`。MCP 按 pi 自己的写法：禁用写
   `enabled: false`（保留条目不连接），启用则删掉该键（缺省即启用）。
-- **写完 `registry.disposeAll()`**：pi 每个子进程只在启动时读一次配置，不回收的话页面改了
-  但跑着的会话还是旧配置。打开的流走 SSE 自愈路径重连，新子进程即读新配置。
+- **写完不回收子进程**（曾经的 `disposeAll()` 已移除）。settings.json 里这些键是 pi 的
+  **启动默认值**，而我们一度把「让改动立即生效」和「不打断会话」两个目标混在一起了：
+  回收全部暖子进程会（a）把正在跑的一轮掐断，（b）让**每个仍然用默认值的旧会话在重开后换模型**
+  ——后者不是用户要的。pi 自己的恢复逻辑（`core/sdk.js`）是：会话有 `model_change` 条目就
+  用会话里的模型，只有从未选过模型的会话才回退到 `defaultProvider`/`defaultModel`
+  （thinking level 同理）。所以正确的语义是「**只对之后 spawn 的子进程生效**」：
+  新建会话自然拿到新默认值，已在运行的会话不受影响；旧会话被回收后重开时才会读到新默认值，
+  那是 pi 的行为、不是我们在保存瞬间强行改的。
+- **AGENTS.md / mcp.json 仍然在写完 `disposeAll()`**：这两样是子进程启动时一次性注入的
+  提示词与 MCP 连接，不回收则页面上改了、跑着的会话仍是旧的。它们的语义更接近「连接」
+  而不是「默认值」，所以保留强制生效（代价同样是打断运行中的一轮，见待办）。
 
 为什么 token 统计要自己扫文件：pi 只有 `get_session_stats`（单会话、且需要子进程在线），
 没有任何跨会话的用量存储。而每条 assistant 消息都带着 provider 报的 token 与花费，

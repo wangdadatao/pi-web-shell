@@ -561,3 +561,103 @@ resources 页的「只读」脚注与「启用/禁用还没实现」）。
   当前会话不弹 / retired 不弹 / exited 措辞不同 / abort 不弹 / 重跑清旧角标 / 点 toast 跳会话
   并清角标 / 扩展标题与角标叠加 / 无页面异常）；后端 3 例
 - 回归：typecheck 干净；单测 95/95；`npm run ui:test` 9 个脚本全绿
+
+## M2.20.1 设置保存不再回收子进程（2026-10-09）
+
+问题（用户实测）：设置 → 模型配置 → 保存后，**所有**打开的会话被回收重开，正在跑的那一轮被掐断；
+而且「默认模型」本该只影响新建会话，却把仍在用默认值的旧会话也改了模型。
+
+根因：`/api/settings/save` 写完 settings.json 就 `disposeAll()`（M2.13 为「让改动立即生效」加的），
+把「立即生效」和「不打断会话」两个目标混在一起了。pi 自己的恢复逻辑（`core/sdk.js`）是：
+会话有 `model_change` 条目就用会话里的模型，**只有从未选过模型的会话**才回退到
+`defaultProvider`/`defaultModel`（thinking level 同理）——所以回收等于强行改旧会话的模型。
+
+- [x] `/api/settings/save` 移除 `disposeAll()`：settings.json 是**启动默认值**，只对之后
+  spawn 的子进程生效。新建会话自然拿到新默认值；已在运行的会话不受影响、不被打断。
+  AGENTS.md / mcp.json 保留回收（启动时一次性注入的提示词/MCP 连接，语义不同）——
+  验证：隔离 fake pi + 真 HTTP 路径，跑一轮中途保存：`/api/events` 只有 `started` 帧、
+  无 `retired`，pi pid 前后一致；settings.json 已落盘为 `{"defaultModel":"m2"}`
+- [x] 文案对齐：`settings.editLead` / `settings.saved` 中英改成「启动默认值 / 只对之后新建
+  或重开的会话生效 / 不打断运行中的会话」
+- 回归：typecheck 干净；单测 95/95；`npm run ui:test` 全绿
+
+## M2.21 用户消息「编辑 / 删除重发」（2026-10-09）
+
+需求：发错了想重来——「点停止 → 删掉刚发的 → 重发」。评估结论：这正是 pi 官方的
+`/tree` 选中→改→提交语义，RPC 侧对应 `fork`，而 web 已有 `/api/fork` 与分支树面板，
+所以是复用而非新协议。
+
+- [x] 服务端 `/api/fork` 支持 `{ fromEnd }`：快照的消息来自 `get_messages`、不带 entry id，
+  `get_fork_messages` 又不做分支过滤，所以新增 `treeView.activeUserEntryIds()`——从 `leafId`
+  沿 `parentId` 走出活动分支的用户消息，取倒数第 N 条。从末尾对齐是安全的（压缩只丢旧消息、
+  不重排） — 验证：`test/treeView.test.ts` 新增 2 例（旧分支的同文本消息不被选中 / 空 leaf）
+- [x] **发现并修一个被测试盲区掩盖的真 bug**：`treeView.convert` 从 entry 顶层读
+  `role`/`content`，但 pi 的 entry 把它们放在 `message` 里（`get_tree` 实测确认）。
+  后果：分支树里**每个节点都是 assistant、预览全是「…」、用户节点永远没有分叉按钮**。
+  UI 测试 stub 的是重塑后的 payload、单测 fixture 又把 role/content 放顶层，两边都绕过了
+  真实形状 — 修法：从 `entry.message` 读；按 CLI 默认视图隐掉 system/`usage`/`model_change`/
+  `thinking_level_change` 等簿记 entry，隐藏时**子节点上提**（hoist），免得夹在中间的簿记
+  节点吞掉后续分支。验证：真实 pi `get_tree` 输出经 `reshapeTree` 得到
+  `user u1 → assistant a1 → user u2`（修复前全是 assistant/「…」）；单测 fixture 改成真实
+  `message:{role,content}` 形状 + 新增 hoist 用例
+- [x] 前端：用户气泡悬停出 ✎/🗑；编辑 = fork 后把返回文本填回输入框，删除 = 不填；
+  运行中先 `abort` 并 `waitForIdle()`（新 `settleWaiters`，随 `agent_settled` 释放）；带图
+  消息额外提示图片不会自动带回 — 验证：`scripts/ui-test-edit.ts` 15 断言
+- [x] `fromEnd` **在点击时才算**，不用渲染时写进 `data-*` 的值——期间新发一条消息就会指错
+  entry（测试专门断言「最老那条在新增消息后重算为 fromEnd=2」）
+- [x] **关键事实：RPC 的 `fork` 每次都新建一个 session 文件**（`createBranchedSession`，
+  不是就地开分支；官方 `/tree` 的就地导航没有 RPC 入口）。`fork` 的 response 只回 `text`
+  不回新路径，所以 `/api/fork` 补一发 `get_state`，切了文件就 `dispose` 旧子进程并返回
+  `sessionFile`；前端 `followFork()` 刷新列表并 `openSession(新路径)`。这同时修好了**既有分支树
+  fork 的错位**（之前 fork 后标签页还指着旧路径，而子进程已在写新文件）— 验证：真实 pi
+  端到端（`fork{fromEnd:0}` → 返回 `text:"wrong message"` 与新 `sessionFile`；新会话出现在
+  `/api/sessions` 且快照为 `[user:first question, assistant:first answer]`，错误消息已不在）
+- [x] i18n 新增 5 词条中英对齐；CSS 补 `.msg-actions` / `.msg-act`（悬停显形）
+- [x] 按钮收成**纯图标**（✎ 编辑 / 🗑 删除 / 📋 复制），文案只进 `title`/`aria-label`；
+  复制复用 `data-copy` 那条通路，图标按钮的复制反馈改成闪 ✓/✗ 而不是文字（否则行会跳）
+- [x] 位置：**气泡下方**、右对齐，`position: absolute` 不占高、不撑气泡；
+  气泡→按钮的过渡区用 `padding` 而非 `margin`，鼠标下移不会掉出 `:hover`
+- 回归：typecheck 干净；单测 98/98；`npm run ui:test` 10 个脚本全绿
+
+## M2.21.1 消息时间与回复统计（2026-10-09）
+
+- [x] 编辑/删除/复制收成**纯图标**（✎ / 🗑 / 📋），文案只进 `title`/`aria-label`；复制复用
+  `data-copy` 通路，图标按钮的复制反馈改成闪 ✓/✗（否则把文字塞进图标按钮会让整行抖）
+- [x] 按钮行**移到气泡下方**：`position: absolute; top: calc(100% + 1px)`（`100%` 落在 padding box，
+  补回 1px 边框），间距用 `padding` 而非 `margin`，鼠标下移不断 hover；不占高、不撑气泡
+- [x] 用户气泡 hover 时行首显示**发送时间**（`YYYY-MM-DD HH:mm:ss`，本地时区）
+- [x] 助手气泡：复制按钮从气泡右上角**移到下方行首**；**最后一条回复**的统计行常驻显示，
+  内容是 `用时 X · ↑A ↓B · 结束时间`（箭头口径与底部统计条一致）。消息里的 `timestamp` / `usage` 来自
+  `get_messages`（`stripInlineImages` 是 `{...record, content}`，不影响这两个字段），
+  用时 = 该轮用户消息 ts → 回复 ts；直播路径用 `state.turnStartMs` + `message_end` 的
+  `message.timestamp`
+- [x] **修 token 口径 bug**（用户实测抓到）：一开始取的是**最后一条** assistant 的 `usage.output`，
+  但带工具的一轮会有 N 次模型调用，那条只是最后一轮的尾巴。实测同一轮：末条 575 vs
+  整轮 40839（31 轮）。改成在 `renderHistory` 里按「上一条 user 消息」重开计数、累加每轮
+  `usage.output`；直播路径用 `state.turnOutput` 在 `agent_start` 清零、每次 `message_end` 累加。
+  用时本身是对的（首尾时间差）
+- [x] 只有**最后一条**回复的统计常驻（它后面没有消息，不会压到别的东西）；旧回复 hover 才显示。
+  新发消息时 `addMessage` 会摘掉旧的 `is-last`。踩到一个坑：`.msg.assistant` 没写
+  `position: relative`，导致统计行按祖先定位跑到页面中部——把 `position: relative` 提到
+  `.msg` 基类上
+- 验证：`scripts/ui-test-edit.ts` 29 断言（新增时间格式、复制按钮已移出气泡头、统计行含
+  tokens/用时/结束时间、助手复制可用）；typecheck 干净；单测 98/98；`npm run ui:test` 全绿
+
+## M2.21.2 代码审计整改（2026-10-10）
+
+对 M2.21 的代码做了一轮外部审计，逐条处理：
+
+- [x] **删掉只写不读的 `data-user-from-end`**：点击处理本来就是用 `bubbles.indexOf(...)` 现算，
+  该属性只有测试在读，属于「只测不用」的假契约。连带删掉 `renderHistory` 里为它维护的
+  `userCount`/`userIndex`，`userActions(timestamp)` 不再需要索引参数 — 验证：全仓库
+  `grep data-user-from-end` 零命中；行为断言（`fromEnd:1`/`0`/点击时重算为 `2`）仍在
+- [x] **修 `fmtDuration` 进位边界**：`Math.round(seconds % 60)` 在 119.6s 会得到 60 → `1m60s`。
+  改成先 `Math.round` 总秒数再拆分 — 验证：新增断言 `119.6s → 2m00s`、`120s → 2m00s`、
+  `59.4s → 59.4s`（旧实现下第一条会 FAIL）
+- [x] **`followFork` 兜底对象补全**：原先只给了 `{path,cwd,title}`，`refreshSessionList` 还没
+  索引到新会话时会渲染出不完整的行。现在补齐侧栏用到的字段（`updatedAt`/`pending`/`running`）
+  并 push 进 `state.sessions` 再 `renderSessions()` — 视觉不再闪
+- [x] **给两处已知取舍补注释**（不改行为）：`/api/fork` 解析 `fromEnd` 要拉全量 `get_entries`
+  （普通会话无感，超大会话有一次点击延迟）；`treeView` hoist 隐藏 entry 时会丢掉它自己的
+  label（CLI 默认视图同样隐藏这些节点，实际无影响）
+- 回归：typecheck 干净；单测 98/98；`npm run ui:test` 全绿（ui-test-edit 27 断言 + 3 条边界）

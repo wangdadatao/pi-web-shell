@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { reshapeTree } from "../src/server/treeView.ts";
+import { activeUserEntryIds, reshapeTree } from "../src/server/treeView.ts";
 
 /**
  * reshapeTree is the only transformation between pi's get_tree (whole entries,
@@ -9,8 +9,20 @@ import { reshapeTree } from "../src/server/treeView.ts";
  * against a real pi in the UI smoke paths.
  */
 
+/**
+ * The real entry shape pi's `get_tree` returns: role and content are nested
+ * under `message`, not on the entry (a user message's content is a plain
+ * string, an assistant's is a block array). The earlier fixture put them at the
+ * top level, which is exactly why a shape bug in `convert` went unnoticed.
+ */
 function message(id: string, parentId: string | null, role: string, text: string) {
-  return { type: "message", id, parentId, role, content: [{ type: "text", text }] };
+  return {
+    type: "message",
+    id,
+    parentId,
+    timestamp: "2024-12-03T14:00:00.000Z",
+    message: { role, content: role === "user" ? text : [{ type: "text", text }] },
+  };
 }
 
 function node(entry: Record<string, unknown>, children: unknown[] = [], label?: string) {
@@ -114,6 +126,64 @@ describe("reshapeTree", () => {
     assert.equal(view.nodes[0]!.active, false);
     assert.equal(view.nodes[1]!.active, false);
     assert.equal(view.leafId, null);
+  });
+
+  it("hides prompt bookkeeping and hoists its children", () => {
+    const systemMessage = {
+      type: "message",
+      id: "sys1",
+      parentId: "u1",
+      timestamp: "2024-12-03T14:00:01.000Z",
+      message: { role: "system", content: "You are an expert coding assistant…" },
+    };
+    const data = {
+      tree: [
+        node(message("u1", null, "user", "第一问"), [
+          node(systemMessage, [
+            node(message("a1", "sys1", "assistant", "答"), [
+              node({ type: "thinking_level_change", id: "t1", parentId: "a1" }, []),
+            ]),
+          ]),
+        ]),
+      ],
+      leafId: "t1",
+    };
+
+    const view = reshapeTree(data);
+    const u1 = view.nodes[0]!;
+    assert.equal(u1.id, "u1");
+    // The system message is removed, its child takes its place rather than the
+    // rest of the branch being cut off.
+    assert.equal(u1.children.length, 1);
+    const a1 = u1.children[0]!;
+    assert.equal(a1.id, "a1");
+    assert.equal(a1.kind, "assistant");
+    // Trailing bookkeeping is hidden too.
+    assert.equal(a1.children.length, 0);
+  });
+
+  it("resolves active-branch user ids oldest-first for inline forking", () => {
+    const data = {
+      entries: [
+        { type: "message", id: "u1", parentId: null, message: { role: "user", content: "一" } },
+        { type: "message", id: "a1", parentId: "u1", message: { role: "assistant", content: [] } },
+        { type: "message", id: "u2", parentId: "a1", message: { role: "user", content: "二" } },
+        // An abandoned sibling after u2: appended later, must not be picked.
+        { type: "message", id: "u2b", parentId: "a1", message: { role: "user", content: "二（旧）" } },
+        { type: "message", id: "a2", parentId: "u2", message: { role: "assistant", content: [] } },
+        { type: "thinking_level_change", id: "t1", parentId: "a2", thinkingLevel: "high" },
+      ],
+      leafId: "t1",
+    };
+
+    // Newest at the end: the last entry back is u2, not the abandoned u2b.
+    assert.deepEqual(activeUserEntryIds(data), ["u1", "u2"]);
+  });
+
+  it("returns no ids for an empty or unresolvable leaf", () => {
+    assert.deepEqual(activeUserEntryIds({ entries: [], leafId: null }), []);
+    assert.deepEqual(activeUserEntryIds({ entries: [], leafId: "ghost" }), []);
+    assert.deepEqual(activeUserEntryIds(null), []);
   });
 
   it("tolerates junk input", () => {

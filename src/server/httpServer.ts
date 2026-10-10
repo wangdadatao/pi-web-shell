@@ -11,7 +11,7 @@ import { ImageStore, isImageHash, stripInlineImages } from "./imageStore.ts";
 import { loadLocalImage } from "./localImage.ts";
 import { collectEnvironment } from "./environment.ts";
 import { SettingsValidationError, applySettingsPatch, setMcpEnabled, writeAgentsMd } from "./settingsStore.ts";
-import { reshapeTree } from "./treeView.ts";
+import { activeUserEntryIds, reshapeTree } from "./treeView.ts";
 import { normalizeCommands } from "./commands.ts";
 import { buildUiResponse } from "./extensionUi.ts";
 import { UsageIndex } from "./usageStats.ts";
@@ -103,10 +103,44 @@ export function createApp(deps: ServerDeps): Server {
         const body = await readJson(req);
         const managed = registry.get(String(body["path"] ?? ""));
         if (!managed) return sendJson(res, 404, { error: "session not open" });
-        const entryId = String(body["entryId"] ?? "");
+        let entryId = String(body["entryId"] ?? "");
+        // The transcript carries no entry ids, so the inline edit/delete buttons
+        // send "the Nth user message from the end" and it is resolved here
+        // against the active branch. Only paid on click, not on every snapshot.
+        // The cost is `get_entries` — the whole session, abandoned branches and
+        // pre-compaction history included. Fine for a click; it is the price of
+        // `get_messages` not carrying ids and `get_fork_messages` not being
+        // branch-filtered.
+        if (!entryId && body["fromEnd"] !== undefined) {
+          const fromEnd = Number(body["fromEnd"]);
+          const entries = await managed.rpc.send<Record<string, unknown>>({ type: "get_entries" });
+          const ids = activeUserEntryIds(entries);
+          const index = ids.length - 1 - fromEnd;
+          if (!Number.isInteger(fromEnd) || fromEnd < 0 || index < 0 || index >= ids.length) {
+            return sendJson(res, 400, { error: "no such user message on the active branch" });
+          }
+          entryId = ids[index] ?? "";
+        }
         if (!entryId) return sendJson(res, 400, { error: "entryId required" });
         const data = (await managed.rpc.send({ type: "fork", entryId })) as Record<string, unknown>;
-        return sendJson(res, 200, { ok: true, cancelled: data["cancelled"] === true, text: data["text"] ?? null });
+        if (data["cancelled"] === true) {
+          return sendJson(res, 200, { ok: true, cancelled: true, text: null, entryId, sessionFile: null });
+        }
+        // Forking the first message has no parent to rewind to, so pi re-roots
+        // into a *new* session file. Tell the client, which must follow it —
+        // otherwise the tab keeps streaming a subprocess that is now writing a
+        // different file under this one's name. Same drift guard as /api/clone.
+        const state = await getState(managed.rpc);
+        const sessionFile = typeof state["sessionFile"] === "string" ? state["sessionFile"] : null;
+        const switched = Boolean(sessionFile) && normalizeSessionKey(sessionFile!) !== managed.path;
+        if (switched) await registry.dispose(managed.path);
+        return sendJson(res, 200, {
+          ok: true,
+          cancelled: false,
+          text: data["text"] ?? null,
+          entryId,
+          sessionFile: switched ? sessionFile : null,
+        });
       }
       if (route === "POST /api/clone") {
         const body = await readJson(req);
@@ -226,10 +260,16 @@ export function createApp(deps: ServerDeps): Server {
         const patch = await readJson(req);
         try {
           const result = await applySettingsPatch(config.agentDir, patch);
-          // pi reads settings.json once per subprocess, so the warm ones still
-          // run the old config. Dispose them all: open streams reconnect via
-          // the SSE self-heal path and respawn with the new settings.
-          await deps.registry.disposeAll();
+          // Deliberately NOT disposing warm subprocesses.
+          //
+          // settings.json holds *startup* defaults. pi resolves a resumed
+          // session's model from that session's own `model_change` entry and
+          // only falls back to `defaultProvider`/`defaultModel` when the
+          // session never picked one (see pi's core/sdk.js). Recycling every
+          // warm child on save would therefore not just cut a running turn
+          // short, it would rewrite the effective model of every existing
+          // conversation that was still on the default. The change lands where
+          // it belongs: on the next subprocess spawned — a new conversation.
           return sendJson(res, 200, { ok: true, ...result });
         } catch (error) {
           if (error instanceof SettingsValidationError) {

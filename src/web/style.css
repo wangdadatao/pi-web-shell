@@ -1202,13 +1202,16 @@ body {
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 20px 24px 8px;
+  /* Enough room below the last bubble for its absolute stats footer. */
+  padding: 20px 24px 22px;
   display: flex;
   flex-direction: column;
   gap: 14px;
 }
 
 .msg {
+  /* Anchor for `.msg-actions`, which sits just below the bubble. */
+  position: relative;
   max-width: 1032px;
   min-width: 0;
   width: fit-content;
@@ -1224,6 +1227,80 @@ body {
   align-self: flex-end;
   background: var(--user);
   max-width: 720px;
+}
+
+/*
+ * Per-message action row, below the bubble and outside it: absolute so it adds
+ * no height (an `opacity: 0` row *inside* the bubble made every message
+ * taller), with the gap between bubble and buttons as padding rather than
+ * margin so sliding the mouse down keeps `:hover` alive. `top: 100%` lands on
+ * the padding box (1px inside the 1px border), so the extra 1px is added back.
+ */
+.msg.user .msg-actions,
+.msg.assistant .msg-actions {
+  position: absolute;
+  top: calc(100% + 1px);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-top: 2px;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+
+/* User bubbles hug the right edge, so their row does too (send time first). */
+.msg.user .msg-actions {
+  right: 0;
+}
+
+/* Assistant bubbles hug the left edge: copy icon first, reply stats after. */
+.msg.assistant .msg-actions {
+  left: 0;
+}
+
+.msg.user:hover .msg-actions,
+.msg.user:focus-within .msg-actions,
+.msg.assistant:hover .msg-actions,
+.msg.assistant:focus-within .msg-actions,
+/* The final reply keeps its stats on - nothing follows it, so it cannot overlap */
+.msg.assistant.is-last .msg-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.msg-meta {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+/* Icon-only action button: a fixed square so the glyph cannot shift the row. */
+.msg-act {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 25px;
+  height: 23px;
+  padding: 0;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  border-radius: 5px;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.msg-act:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.msg-act.danger:hover {
+  color: var(--danger);
+  border-color: var(--danger);
 }
 
 .msg.assistant {
