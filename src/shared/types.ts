@@ -26,6 +26,13 @@ export interface SessionSummary {
   /** Session file format version. */
   version: number;
   /**
+   * Path of the session this file was forked or cloned from (pi sets this in
+   * the header on both moves; compaction stays inside the same file). The
+   * sidebar folds these chains to their tip (see `supersessions.ts`); the
+   * field is exposed for that and for debugging.
+   */
+  parentSession?: string;
+  /**
    * True while this session's pi subprocess is mid-run (`agent_start` until
    * `agent_settled`). Only sessions owned by this server can report this;
    * a pi process started elsewhere (e.g. a terminal) is invisible here.

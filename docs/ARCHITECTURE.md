@@ -341,7 +341,7 @@ RPC 版：
 
 - `fork` 只接受 **user 消息**，语义是「把叶子回退到它的 `parentId` 并返回它的文本」。
   所以「编辑」= fork + 把 text 填回输入框，「删除」= fork + 不填。被丢掉的旧内容**并未删除**，
-  只是不再是活动分支（旧 session 文件保留在侧栏）。
+  只是不再是活动分支（旧 session 文件仍在磁盘上）。
 - 快照里的消息来自 `get_messages`，**不带 entry id**；而 `get_fork_messages` 不做分支过滤。
   所以前端发「倒数第 N 条 user 消息」（`fromEnd`），服务端用 `treeView.activeUserEntryIds()`
   从 `leafId` 沿 `parentId` 走出活动分支的用户消息再取第 N 条。从**末尾对齐**是安全的：
@@ -350,6 +350,18 @@ RPC 版：
 - 运行中点编辑/删除会先 `abort` 并等 `agent_settled`（`waitForIdle`），否则会在飞行中的一轮
   底下把 agent 拆了。
 - `fork` 只回文本，**图片不回来**：带图的消息会额外提示「图片不会自动带回」。
+
+**旧文件不再出现在侧栏**（`supersessions.ts`）：用户的认知是「编辑就发生在当前会话里」，
+但 fork 必然新建文件，两个同名会话会被当成 bug。所以 `/api/sessions` 把链折叠到 tip：
+某文件只要存在一个**fork 后就再没写过**的子文件（header `parentSession` 指向它，且父文件
+最后写入 ≤ 子文件创建时间）就从列表里隐去。**比较基准是子文件的创建时间而不是它的最后
+活动**——fork 之后还在旧文件里继续写（或后来又 resume）的父会话是独立线程，永远保持可见，
+不管子文件后来多活跃。规则能自愈：子文件被删则父文件重新出现。两类「故意复制」豁免：
+`clone` 和分支树里的显式 `fork(entryId)` 会在 agent 目录旁的
+`<dirname(agentDir)>/web-shell/branch-marks.jsonl`（默认 `~/.pi/web-shell/…`，跟随
+`PI_CODING_AGENT_DIR` 隔离）给子文件打 keep-parent 标，父会话保持可见；内联编辑/删除
+（`fromEnd`）不打标，父文件折叠。「删除整个目录」（`handleDeleteFolder`）传
+`includeSuperseded` 绕过折叠，保证隐藏文件也能被删到。
 
 同一条动作行还兼顾时间与统计（M2.21.1）：
 

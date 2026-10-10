@@ -3,13 +3,15 @@ import type { AddressInfo } from "node:net";
 import { loadConfig } from "./config.ts";
 import { SessionIndex } from "./sessionIndex.ts";
 import { SessionRegistry } from "./sessionRegistry.ts";
+import { BranchMarkStore, defaultBranchMarkStorePath } from "./supersessions.ts";
 import { createApp } from "./httpServer.ts";
 
 async function main(): Promise<void> {
   const config = loadConfig();
   const index = new SessionIndex(config.sessionsDir);
   const registry = new SessionRegistry(config);
-  const server = createApp({ config, index, registry });
+  const branchMarks = new BranchMarkStore(defaultBranchMarkStorePath(config.agentDir));
+  const server = createApp({ config, index, registry, branchMarks });
 
   await new Promise<void>((resolve, reject) => {
     server.once("error", (error: NodeJS.ErrnoException) => {

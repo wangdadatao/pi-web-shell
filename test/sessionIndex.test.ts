@@ -185,4 +185,25 @@ describe("SessionIndex", () => {
     assert.equal(summary?.name, undefined);
     assert.equal(summary?.title, "没有名字");
   });
+
+  it("exposes the header's parentSession for forked files", async () => {
+    const dir = join(root, "--Users-me-forked--");
+    await mkdir(dir, { recursive: true });
+    const path = join(dir, "2024-12-08T10-00-00-000Z_fork.jsonl");
+    await writeFile(
+      path,
+      line({
+        type: "session",
+        version: 3,
+        id: "fork",
+        timestamp: "2024-12-08T10:00:00.000Z",
+        cwd: "/Users/me/forked",
+        parentSession: "/somewhere/2024-12-07T10-00-00-000Z_orig.jsonl",
+      }) +
+        line({ type: "message", id: "u1", parentId: null, message: { role: "user", content: "分叉后" } }),
+    );
+
+    const summary = await new SessionIndex(root).get(path);
+    assert.equal(summary?.parentSession, "/somewhere/2024-12-07T10-00-00-000Z_orig.jsonl");
+  });
 });

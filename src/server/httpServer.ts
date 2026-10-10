@@ -15,6 +15,7 @@ import { activeUserEntryIds, reshapeTree } from "./treeView.ts";
 import { normalizeCommands } from "./commands.ts";
 import { buildUiResponse } from "./extensionUi.ts";
 import { UsageIndex } from "./usageStats.ts";
+import { BranchMarkStore, hideSupersededSessions } from "./supersessions.ts";
 import { normalizeSessionKey } from "./paths.ts";
 import type { SessionIndex } from "./sessionIndex.ts";
 import type { ManagedSession, SessionRegistry } from "./sessionRegistry.ts";
@@ -49,6 +50,8 @@ export interface ServerDeps {
   config: Config;
   index: SessionIndex;
   registry: SessionRegistry;
+  /** Which forked/cloned children keep their parent listed (supersessions.ts). */
+  branchMarks: BranchMarkStore;
 }
 
 export function createApp(deps: ServerDeps): Server {
@@ -133,7 +136,21 @@ export function createApp(deps: ServerDeps): Server {
         const state = await getState(managed.rpc);
         const sessionFile = typeof state["sessionFile"] === "string" ? state["sessionFile"] : null;
         const switched = Boolean(sessionFile) && normalizeSessionKey(sessionFile!) !== managed.path;
-        if (switched) await registry.dispose(managed.path);
+        if (switched) {
+          await registry.dispose(managed.path);
+          // An explicit fork from the branch tree is a deliberate "keep both
+          // copies" move: mark the child so the sidebar keeps listing its
+          // parent. The transcript's edit/delete-resend path (fromEnd) sends no
+          // mark — there the parent folds away, matching the user's mental
+          // model of editing *in* the current session.
+          if (body["fromEnd"] === undefined) {
+            await deps.branchMarks.mark({
+              child: normalizeSessionKey(sessionFile!),
+              keepParent: true,
+              at: Date.now(),
+            });
+          }
+        }
         return sendJson(res, 200, {
           ok: true,
           cancelled: false,
@@ -155,6 +172,12 @@ export function createApp(deps: ServerDeps): Server {
         // next acquire respawns on the session this tab actually shows.
         if (sessionFile && normalizeSessionKey(sessionFile) !== managed.path) {
           await registry.dispose(managed.path);
+          // A clone is an explicit duplicate: both sessions stay listed.
+          await deps.branchMarks.mark({
+            child: normalizeSessionKey(sessionFile),
+            keepParent: true,
+            at: Date.now(),
+          });
         }
         return sendJson(res, 200, { ok: true, cancelled: false, sessionFile });
       }
@@ -292,13 +315,25 @@ export function createApp(deps: ServerDeps): Server {
   });
 }
 
-async function collectSessions(deps: ServerDeps): Promise<{
+async function collectSessions(
+  deps: ServerDeps,
+  options: { includeSuperseded?: boolean } = {},
+): Promise<{
   home: string;
   folders: FolderSummary[];
   sessions: SessionSummary[];
 }> {
   const { config, index, registry } = deps;
-  const sessions = await index.listSessions();
+  let sessions = await index.listSessions();
+
+  // Fold fork chains to their tip: pi's edit-resend fork copies the session
+  // into a new file, and listing both reads as a duplicated session. Parents
+  // marked keep-parent (clone / explicit tree fork) stay. Destructive
+  // folder-wide operations opt out so they still see every file.
+  if (!options.includeSuperseded) {
+    const keep = await deps.branchMarks.keepParentChildren();
+    sessions = hideSupersededSessions(sessions, keep);
+  }
   const knownPaths = new Set(sessions.map((session) => session.path));
 
   // Sessions that pi has reserved but not written yet (created, no prompt sent).
@@ -470,7 +505,7 @@ async function handleDeleteFolder(req: IncomingMessage, res: ServerResponse, dep
   const cwd = String(body.cwd ?? "").trim();
   if (cwd === "") return sendJson(res, 400, { error: "cwd is required" });
 
-  const all = await collectSessions(deps);
+  const all = await collectSessions(deps, { includeSuperseded: true });
   const targets = all.sessions.filter((session) => session.cwd === cwd);
   if (targets.length === 0) return sendJson(res, 404, { error: "该目录下没有会话" });
 

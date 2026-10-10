@@ -21,6 +21,8 @@ interface SessionHeader {
   id?: string;
   timestamp?: string;
   cwd?: string;
+  /** Set by pi on fork/clone: the file this session branched off from. */
+  parentSession?: string;
 }
 
 interface CacheEntry {
@@ -172,6 +174,7 @@ export class SessionIndex {
       title: name ?? firstUser ?? "(empty session)",
       version: header.version ?? 1,
       ...(name !== undefined ? { name } : {}),
+      ...(header.parentSession ? { parentSession: header.parentSession } : {}),
     };
 
     this.cache.set(path, {
