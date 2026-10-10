@@ -34,6 +34,16 @@ const api = {
     if (!res.ok) throw new Error(data.error || t("api.promptFailed", { status: res.status }));
     return data;
   },
+  async compact(path, customInstructions) {
+    const res = await fetch("/api/compact", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path, customInstructions }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || t("api.compactFailed", { status: res.status }));
+    return data;
+  },
   async abort(path) {
     const res = await fetch("/api/abort", {
       method: "POST",
@@ -351,6 +361,11 @@ const state = {
   },
   /** Dialog currently on screen: `{ path, request }`, or null. */
   dialog: null,
+  /**
+   * This tab typed `/compact` and its request is still in flight; suppresses
+   * the duplicate "compacting" notice the `compaction_start` event would add.
+   */
+  compacting: false,
   /** Dialogs waiting behind the open one, in arrival order. */
   dialogQueue: [],
   /** Auto-close timer for a dialog that came with a `timeout`. */
@@ -1594,6 +1609,7 @@ async function openSession(session) {
   // previous one would show another session's branches.
   closeTreePanel();
   closeLightbox();
+  state.compacting = false;
   state.path = session.path;
   state.cwd = session.cwd;
   // Opening the session is the acknowledgement: drop its finished badge.
@@ -1743,6 +1759,19 @@ function handleEvent(event) {
       state.lastSpeed = null;
       startStatsTicker();
       setStatus("live");
+      break;
+    case "compaction_start":
+      // Only announce when it was not this tab that typed /compact — that tab
+      // already said so in runCompact().
+      if (!state.compacting) addNotice(t("compact.started"));
+      break;
+    case "compaction_end":
+      state.compacting = false;
+      if (event.errorMessage) addNotice(t("compact.failed", { message: event.errorMessage }), "error");
+      // `willRetry` means the turn is about to be retried, which starts
+      // another round right away — reporting "done" here would flash a false
+      // completion between the two `compaction_start`s.
+      else if (!event.aborted && !event.willRetry) addNotice(t("compact.done"));
       break;
     case "message_start":
       // Build the assistant bubble lazily: a tool-only turn must not create one.
@@ -2704,6 +2733,17 @@ async function sendMessage() {
   }));
   if (!text && images.length === 0) return;
 
+  // `/compact` is this shell's own command (pi's prompt RPC cannot run built-in
+  // slash commands); route it to POST /api/compact instead of the model.
+  const compactMatch = images.length === 0 ? /^\/compact(?:\s+([\s\S]+))?$/.exec(text) : null;
+  if (compactMatch) {
+    el.input.value = "";
+    autoGrow();
+    hideCommandMenu();
+    await runCompact(compactMatch[1] ? compactMatch[1].trim() : undefined);
+    return;
+  }
+
   state.turnStartMs = Date.now();
   addMessage({ role: "user", content: text ? renderUserContent(text, images) : images, timestamp: state.turnStartMs });
   // The bubble is appended below the current viewport; without this the user's
@@ -2741,6 +2781,9 @@ function autoGrow() {
 // (`get_commands`): extension commands, prompt templates, and skill commands.
 // Built-in TUI commands are not in that list, because pi does not execute them
 // from a `prompt` — offering them would promise something that cannot work.
+// `/compact` is the exception: the shell runs it itself, through the `compact`
+// RPC (`POST /api/compact`), so it is appended to the menu (source
+// "builtin") and intercepted in `sendMessage`.
 
 /** The `/token` being typed, or null when the input is not a bare command. */
 function commandQuery() {
@@ -2760,9 +2803,45 @@ async function loadCommands() {
   try {
     const data = await api.commands(path);
     if (state.path !== path) return; // the user switched sessions mid-flight
-    state.commands = Array.isArray(data.commands) ? data.commands : [];
+    const piCommands = Array.isArray(data.commands) ? data.commands : [];
+    // Offer the shell-side /compact alongside pi's commands: pi's prompt RPC
+    // cannot run built-in TUI commands, so without this entry the most
+    // important escape hatch on a maxed-out context is undiscoverable.
+    if (!piCommands.some((command) => command.name === "compact")) {
+      piCommands.push({
+        name: "compact",
+        description: t("command.compactDesc"),
+        source: "builtin",
+      });
+    }
+    state.commands = piCommands;
   } catch {
     state.commands = [];
+  }
+}
+
+/**
+ * Run `/compact` through POST /api/compact. Progress comes back as
+ * `compaction_start` / `compaction_end` stream events; here we only surface
+ * the immediate start and any transport-level failure.
+ */
+async function runCompact(customInstructions) {
+  const path = state.path;
+  if (!path) return;
+  state.compacting = true;
+  addNotice(t("compact.started"));
+  try {
+    const data = await api.compact(path, customInstructions);
+    // The RPC resolved: compaction is done, or the server gave up waiting
+    // while pi kept working (`pending`). Either way this request is over; the
+    // stream events remain the single source of truth for the outcome.
+    state.compacting = false;
+    if (data && data.pending) addNotice(t("compact.pending"));
+  } catch (error) {
+    state.compacting = false;
+    // The user may have switched sessions while the request was in flight;
+    // a failure notice belongs to the session it was about.
+    if (state.path === path) addNotice(t("compact.failed", { message: error.message }), "error");
   }
 }
 
@@ -2799,6 +2878,7 @@ const COMMAND_SOURCE_KEYS = {
   extension: "command.source.extension",
   prompt: "command.source.prompt",
   skill: "command.source.skill",
+  builtin: "command.source.builtin",
 };
 
 function renderCommandMenu() {

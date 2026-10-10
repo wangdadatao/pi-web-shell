@@ -125,6 +125,7 @@ pi 只有在第一条消息时才会把会话写盘。所以新建会话后 `get
 | GET | `/api/image/<sha1>` | 快照里的图片字节，内容寻址 + `immutable` 缓存 |
 | GET | `/api/local-image?path=<abs>` | 正文 Markdown 引用的本地图；魔数嗅探只放行 PNG/JPEG/GIF/WEBP，ETag 用 size+mtime |
 | POST | `/api/prompt` | `{ path, message, images? }`，流式中自动用 `followUp` |
+| POST | `/api/compact` | `{ path, customInstructions? }` → `compact`（内置 `/compact` 的落地；pi 的 `prompt` 不执行内置命令）。会话在跑或已在压缩中 → 409；RPC 超时 → `200 {pending:true}`，结果以后续 `compaction_end` 事件为准 |
 | POST | `/api/ui-response` | 回填扩展 UI 请求（`extension_ui_request`）的答案 |
 | POST | `/api/abort` | `{ path }` |
 | POST | `/api/model` | `{ path, provider, modelId }` → `set_model` |

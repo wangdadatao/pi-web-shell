@@ -59,6 +59,9 @@ export function createApp(deps: ServerDeps): Server {
   const images = new ImageStore();
   // Machine-wide token totals, cached per session file by mtime + size.
   const usage = new UsageIndex(config.sessionsDir);
+  // Sessions with a compaction request in flight; a second one (another tab)
+  // gets a 409 instead of a duplicate summarization run.
+  const compacting = new Set<string>();
 
   return createServer(async (req, res) => {
     try {
@@ -195,6 +198,10 @@ export function createApp(deps: ServerDeps): Server {
         if (!managed) return sendJson(res, 404, { error: "session not open" });
         await managed.rpc.send({ type: "abort" }, 60_000);
         return sendJson(res, 200, { ok: true });
+      }
+
+      if (route === "POST /api/compact") {
+        return handleCompact(req, res, deps, compacting);
       }
 
       if (route === "POST /api/rename") {
@@ -763,6 +770,72 @@ async function handlePrompt(req: IncomingMessage, res: ServerResponse, deps: Ser
 
   const data = await managed.rpc.send(command);
   return sendJson(res, 200, { ok: true, data });
+}
+
+/**
+ * Manual compaction, the RPC twin of the TUI's `/compact`.
+ *
+ * pi's `prompt` RPC never executes built-in slash commands — typed blindly,
+ * "/compact" goes to the model as ordinary text (and on a maxed-out context
+ * even that cannot answer). The RPC has a first-class `compact` message, so
+ * the shell offers `/compact` in its own command menu and routes it here.
+ *
+ * Compaction runs a summarization model call over the whole conversation; on
+ * a several-hundred-k-token session that takes minutes, so the request gets a
+ * long timeout and the UI leans on the `compaction_start` / `compaction_end`
+ * stream events for live feedback.
+ */
+async function handleCompact(
+  req: IncomingMessage,
+  res: ServerResponse,
+  deps: ServerDeps,
+  compacting: Set<string>,
+): Promise<void> {
+  const body = await readJson(req);
+  const key = normalizeSessionKey(String(body.path ?? ""));
+  const instructions =
+    typeof body.customInstructions === "string" && body.customInstructions.trim() !== ""
+      ? body.customInstructions.trim()
+      : undefined;
+
+  // Claim the session before the first await: two tabs hitting this together
+  // must not both pass the check while the registry acquire is in flight.
+  if (compacting.has(key)) {
+    return sendJson(res, 409, { error: "该会话正在压缩中，请等它完成" });
+  }
+  compacting.add(key);
+
+  // The session may have been idle-reaped since the tab opened; fall back to
+  // acquiring it, the same dedup the rename endpoint uses.
+  let managed = deps.registry.get(key);
+  let acquired: ManagedSession | null = null;
+  try {
+    if (!managed) {
+      const summary = await deps.index.get(key);
+      if (!summary) return sendJson(res, 404, { error: "session not open" });
+      acquired = await deps.registry.acquire(key, summary.cwd);
+      managed = acquired;
+    }
+    if (managed.streaming) {
+      return sendJson(res, 409, { error: "会话正在运行，先等它结束或中止" });
+    }
+    const command: Record<string, unknown> = { type: "compact" };
+    if (instructions) command["customInstructions"] = instructions;
+    const result = await managed.rpc.send(command, 10 * 60_000);
+    return sendJson(res, 200, { ok: true, result });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    // A timeout is not a failure: pi's summarization call may simply outlast
+    // our patience, and the stream will still report compaction_end. Report
+    // "still running" so the UI never shows "failed" and "done" in sequence.
+    if (/timed out/.test(message)) {
+      return sendJson(res, 200, { ok: true, pending: true });
+    }
+    return sendJson(res, 500, { error: `Compaction failed: ${message}` });
+  } finally {
+    compacting.delete(key);
+    if (acquired) deps.registry.release(acquired);
+  }
 }
 
 /**

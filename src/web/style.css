@@ -2460,6 +2460,7 @@ button:disabled {
 .command-source-extension { color: var(--warning); border-color: var(--warning); }
 .command-source-prompt { color: var(--ok); border-color: var(--ok); }
 .command-source-skill { color: var(--accent); border-color: var(--accent); }
+.command-source-builtin { color: var(--muted); border-color: var(--muted); }
 
 .command-desc {
   min-width: 0;

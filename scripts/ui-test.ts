@@ -54,6 +54,30 @@ async function waitForHttp(url: string, timeoutMs = 15000): Promise<boolean> {
   return false;
 }
 
+/**
+ * Parse the URL out of the server's startup banner.
+ *
+ * The banner prints the actually-bound address (see `src/server/index.ts`),
+ * which is the only trustworthy source when the port was left to the OS.
+ */
+function readServerUrl(child: ChildProcess, timeoutMs = 15000): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let buffer = "";
+    const timer = setTimeout(() => reject(new Error("server did not print its URL in time")), timeoutMs);
+    const done = (fn: () => void) => {
+      clearTimeout(timer);
+      fn();
+    };
+    child.stdout?.on("data", (chunk: Buffer) => {
+      buffer += chunk.toString("utf8");
+      const match = /→\s+(http:\/\/\S+)/.exec(buffer);
+      const url = match?.[1];
+      if (url) done(() => resolve(url));
+    });
+    child.on("exit", (code) => done(() => reject(new Error(`server exited before printing its URL (code ${code})`))));
+  });
+}
+
 async function main(): Promise<void> {
   const failed: string[] = [];
   const step = async (label: string, command: string, args: string[]): Promise<void> => {
@@ -85,7 +109,10 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const port = 8700 + Math.floor(Math.random() * 200);
+  // Port 0: the OS hands out a port that nothing else can be holding, so the
+  // suite can never accidentally talk to some unrelated local service that
+  // happens to squat on a fixed port. The real port is parsed from the
+  // server's own startup banner below.
   const sessionsDir = await mkdtemp(join(tmpdir(), "pi-ui-test-sessions-"));
   // An isolated agent dir too: ui tests must never read, let alone write, the
   // real ~/.pi/agent (the settings-edit test writes settings.json).
@@ -96,16 +123,19 @@ async function main(): Promise<void> {
       ...process.env,
       PI_SHELL_SESSIONS_DIR: sessionsDir,
       PI_CODING_AGENT_DIR: agentDir,
-      PI_SHELL_PORT: String(port),
+      PI_SHELL_PORT: "0",
       PI_SHELL_OPEN_BROWSER: "0",
     },
-    stdio: ["ignore", "ignore", "inherit"],
+    stdio: ["ignore", "pipe", "inherit"],
   });
   try {
-    const base = `http://127.0.0.1:${port}/`;
-    if (!(await waitForHttp(base))) {
+    const base = await readServerUrl(server).catch((error: Error) => {
+      process.stderr.write(`${error.message}\n`);
+      return null;
+    });
+    if (!base || !(await waitForHttp(base))) {
       failed.push("server boot");
-      process.stderr.write(`server did not come up at ${base}\n`);
+      process.stderr.write(`server did not come up${base ? ` at ${base}` : ""}\n`);
     } else {
       console.log(`\n━━━ ui tests ` + "─".repeat(44));
       console.log(`isolated server: ${base} (${sessionsDir})`);

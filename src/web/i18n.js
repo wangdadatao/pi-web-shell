@@ -23,6 +23,7 @@ const MESSAGES = {
     /* ---------- API errors ---------- */
     "api.sessionsFailed": "加载会话失败: {status}",
     "api.promptFailed": "发送失败: {status}",
+    "api.compactFailed": "压缩请求失败: {status}",
     "api.modelsFailed": "加载模型列表失败: {status}",
     "api.commandsFailed": "加载命令列表失败: {status}",
     "api.setModelFailed": "切换模型失败: {status}",
@@ -67,7 +68,13 @@ const MESSAGES = {
     "command.source.extension": "扩展",
     "command.source.prompt": "模板",
     "command.source.skill": "技能",
+    "command.source.builtin": "内置",
     "command.source.other": "命令",
+    "command.compactDesc": "压缩会话上下文（生成摘要替换历史，救回被塞满的会话）",
+    "compact.started": "正在压缩上下文，长会话可能需要几分钟…",
+    "compact.pending": "压缩仍在进行，完成后会有提示。",
+    "compact.done": "上下文已压缩。",
+    "compact.failed": "压缩失败: {message}",
 
     /* ---------- markdown / mermaid ---------- */
     "mermaid.rendering": "渲染图表中…",
@@ -367,6 +374,7 @@ const MESSAGES = {
     /* ---------- API errors ---------- */
     "api.sessionsFailed": "Failed to load sessions: {status}",
     "api.promptFailed": "Send failed: {status}",
+    "api.compactFailed": "Compact request failed: {status}",
     "api.modelsFailed": "Failed to load models: {status}",
     "api.commandsFailed": "Failed to load commands: {status}",
     "api.setModelFailed": "Failed to switch model: {status}",
@@ -411,7 +419,13 @@ const MESSAGES = {
     "command.source.extension": "extension",
     "command.source.prompt": "template",
     "command.source.skill": "skill",
+    "command.source.builtin": "built-in",
     "command.source.other": "command",
+    "command.compactDesc": "Compact the session context (summarize and replace history)",
+    "compact.started": "Compacting the context — a long session can take a few minutes…",
+    "compact.pending": "Compaction is still running; a notice will follow when it finishes.",
+    "compact.done": "Context compacted.",
+    "compact.failed": "Compaction failed: {message}",
 
     /* ---------- markdown / mermaid ---------- */
     "mermaid.rendering": "Rendering diagram…",
