@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import type { SessionSummary } from "../shared/types.ts";
 import { normalizeSessionKey } from "./paths.ts";
 
+// @project-doc docs/architecture/branches_and_editing.md#sidebar_fold
 /**
  * Sidebar view of pi's fork chains.
  *

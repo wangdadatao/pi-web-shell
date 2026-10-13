@@ -345,7 +345,7 @@ function basename(path: string): string {
 }
 
 /**
- * pi stores sessions one of two ways (see docs/ARCHITECTURE.md), and both have
+ * pi stores sessions one of two ways (see docs/domains/session_indexing.md#layout_modes), and both have
  * to be walked: `<dir>/--<cwd>--/<file>.jsonl` and `<dir>/<file>.jsonl`.
  */
 async function listSessionFiles(root: string): Promise<string[]> {

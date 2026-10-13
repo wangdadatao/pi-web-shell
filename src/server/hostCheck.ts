@@ -1,3 +1,4 @@
+// @project-doc docs/operations/security.md#host_header
 /**
  * Host-header validation against DNS rebinding.
  *

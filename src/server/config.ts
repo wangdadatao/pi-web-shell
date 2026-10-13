@@ -55,7 +55,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   // Only override pi's own resolution when we are the only one who knows the
   // directory. A `PI_CODING_AGENT_SESSION_DIR` is inherited by the child, so the
   // flag would be redundant there. Passing `--session-dir` also switches pi to a
-  // flat layout that `pi --resume` cannot see — see docs/ARCHITECTURE.md.
+  // flat layout that `pi --resume` cannot see — see docs/domains/session_indexing.md#session_dir_policy.
   const piOwnSessionsDir = env.PI_CODING_AGENT_SESSION_DIR ?? defaultSessionsDir;
   const sessionDirArg =
     shellSessionsDir && resolve(shellSessionsDir) !== resolve(piOwnSessionsDir)

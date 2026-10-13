@@ -38,7 +38,7 @@ npm run service:uninstall  # 移除
 npm run dev          # 带 --watch 的开发模式
 npm test             # 单元测试（node:test）
 npm run typecheck    # tsc --noEmit
-npm run plan         # 查看 docs/PLAN.md 的进度和下一项
+npm run plan         # 查看开发账本进度与下一项（docs/operations/development_plan.md）
 ```
 
 ## 配置
@@ -64,10 +64,11 @@ npm run plan         # 查看 docs/PLAN.md 的进度和下一项
 - 配色**逐个复制自 pi 主题**（行内代码紫、标题琥珀、代码块绿、字符串橙），不是自己调的。
 - 代码块带语言标签 + 语法高亮 + 复制按钮；未标注语言的块按纯文本显示（不猜语言）。
 - ```mermaid 围栏渲染成图表（flowchart / sequence / gantt / pie 等），带复制源码按钮；语法错误时显示原因并展开源码。Mermaid 约 3.4 MB，首次出现图表时才按需加载。
-- 每条助手回复右上角有复制按钮（悬停出现），只复制正文，不含思考与工具输出。
+- 助手回复下方动作行有复制按钮（悬停出现），只复制正文，不含思考与工具输出；最后一条回复常驻用时与 token 统计。
 - 🌳 **分支树**：会话本身就是一棵 append-only 的树。面板把当前分支平铺成主干、岔路折成「⑂ 分支 · N 条」胶囊（点开递归展开）；用户消息上可「从这里分叉」（`fork`，会切到新会话），顶部可把整条会话复制成新会话（`clone`）。
 - 图片点开看大图：正文里的本地图与工具截图占位符，点击都在应用内全屏查看，Esc 或点空白关闭。
-- 发错了想重来：用户消息悬停出「✎ 编辑重发 / 🗑 删除重发」。这是 pi 的「回到这条之前再重发」（`fork`）的 RPC 版——回到该消息之前，编辑会把原文填回输入框；被丢掉的内容并未删除，而是留在旧会话（`fork` 每次会新建一个 session 文件并切过去，旧的在左侧列表里）。运行中会先自动停止再操作。
+- 发错了想重来：用户消息悬停出「✎ 编辑重发 / 🗑 删除重发」。这是 pi 的「回到这条之前再重发」（`fork`）的 RPC 版——`fork` 会新建 session 文件并切过去；旧文件仍在磁盘，但侧栏默认折叠被 supersede 的父会话（clone / 树分叉除外）。运行中会先自动停止再操作。
+- 输入 `/compact`（或命令菜单）压缩上下文：走 `POST /api/compact`，长会话可能需数分钟；运行中或已在压缩会 409。
 - 底部统计条：上下文进度条、累计 token、缓存命中、花费、轮数/工具数、实时 token/s；右侧是模型与思考等级两个下拉（只有一个候选时自动隐藏）。
 - 输入框打 `/` 弹出命令菜单（数据来自 pi 的 `get_commands`）；扩展用 `ctx.ui.*` 弹的对话框（select / confirm / input / editor）、状态行与 widget 都会在页面上真实呈现。
 - 左下角「⚙ 设置」进入设置页（左菜单 + 右内容，Esc 返回）：
@@ -143,7 +144,7 @@ npm run shot -- <url> <out.png> --wait 6000 \
 本项目基于 MIT 协议开源（见 [LICENSE](LICENSE)）。前端 vendored 库的许可证见
 [`src/web/vendor/README.md`](src/web/vendor/README.md)。
 
-细节见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)，进度与待办见 [`docs/PLAN.md`](docs/PLAN.md)。
+工程文档（Project Doc）见 [`docs/index.md`](docs/index.md)；里程碑账本见 [`docs/operations/development_plan.md`](docs/operations/development_plan.md)。
 
 ## 目录结构
 
@@ -165,5 +166,6 @@ scripts/screenshot.ts          CDP 截图 + 断言
 scripts/theme.ts               配色比对（npm run theme:check）
 scripts/vendor.ts              拷贝前端第三方库到 src/web/vendor/
 test/                          单元测试
-docs/                          架构与计划
+docs/                          Project Doc（index.md 为入口）
+docs/operations/development_plan.md  开发账本（非架构唯一来源）
 ```

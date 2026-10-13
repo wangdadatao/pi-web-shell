@@ -1,3 +1,4 @@
+// @project-doc docs/operations/settings_and_config.md#settings_json_patch
 /**
  * The write path for pi's agent-directory settings.json.
  *

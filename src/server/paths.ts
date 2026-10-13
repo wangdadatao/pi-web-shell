@@ -1,6 +1,7 @@
 import { realpathSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 
+// @project-doc docs/operations/security.md#path_validation
 /**
  * Canonical key for a session path: symlinks resolved as far up the chain as
  * possible.

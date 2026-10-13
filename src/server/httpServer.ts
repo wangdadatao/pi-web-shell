@@ -31,6 +31,7 @@ import type {
   ActivityFrame,
 } from "../shared/types.ts";
 
+// @project-doc docs/interfaces/http_and_sse.md#http_routes
 const WEB_DIR = fileURLToPath(new URL("../web/", import.meta.url));
 const MAX_BODY_BYTES = 32 * 1024 * 1024;
 const SSE_HEARTBEAT_MS = 25_000;

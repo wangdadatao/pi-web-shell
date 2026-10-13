@@ -1,5 +1,7 @@
 # pi-web-shell — 开发计划
 
+> **开发账本**（里程碑与验证记录），不是 Project Doc 的当前行为权威来源。架构与契约见 [docs/index.md](../index.md)。
+
 跟踪方式：每项 [ ] → 开发 → 验证 → 改成 [x] → 进入下一项。
 随时运行 `npm run plan` 查看进度条和「下一项」。
 
@@ -8,7 +10,7 @@
 - [x] 搭建 Node + TypeScript 骨架，零运行时依赖，Node 直接跑 .ts — 验证：`npm start` 正常启动
 - [x] 扫描 `~/.pi/agent/sessions`，按文件头 `cwd` 分组，只显示有会话的文件夹 — 验证：单元测试 + 冒烟 `/api/sessions`
 - [x] 会话列表：优先 `session_info` 名字，否则首条用户消息，配相对时间 — 验证：单元测试 6/6
-- [x] 大文件只读头尾（256KB/128KB）+ 按 mtime 缓存 — 验证：161MB / 136 文件扫描不卡
+- [x] 大文件只读头尾（256KB/128KB）+ 按 mtime 缓存 — 验证：161MB / 136 文件扫描不卡。注：当时实现是固定尾窗；现行算法为 256KB 头 + 自 EOF 按块回扫最多 4MB（见 [session_indexing](../domains/session_indexing.md#head_tail_reads)）
 - [x] 打开会话：`pi --mode rpc --session <file>` 子进程加载历史 — 验证：快照返回 2 条消息
 - [x] SSE 流式对话：转发 text/thinking/tool 事件，`agent_settled` 收尾 — 验证：端到端收到「好的」
 - [x] 图片输入：`prompt.images` 传输 + 历史图片渲染 — 验证：图片块回读进 snapshot
@@ -661,3 +663,16 @@ resources 页的「只读」脚注与「启用/禁用还没实现」）。
   （普通会话无感，超大会话有一次点击延迟）；`treeView` hoist 隐藏 entry 时会丢掉它自己的
   label（CLI 默认视图同样隐藏这些节点，实际无影响）
 - 回归：typecheck 干净；单测 98/98；`npm run ui:test` 全绿（ui-test-edit 27 断言 + 3 条边界）
+
+## M2.22 `/compact` 与侧栏 fork 链折叠（2026-10-10）
+
+- [x] `POST /api/compact`：运行中/已在压缩 409；RPC 超时返回 `{pending:true}` — 验证：`test/httpServerCompact.test.ts`
+- [x] 前端 `/compact` 与命令菜单、`compaction_*` 事件提示 — 验证：`scripts/ui-test-compact.ts`
+- [x] `supersessions.ts`：内联 fork 后隐藏 superseded 父会话；`branch-marks.jsonl` 豁免 clone/树 fork — 验证：`test/supersessions.test.ts`
+
+## M2.23 Project Doc 文档库（2026-10-13）
+
+- [x] 按 project-doc 技能拆分 `docs/`：`architecture/`、`interfaces/`、`domains/`、`operations/`、`decisions/` + 根 `index.md`
+- [x] 原 `ARCHITECTURE.md` 迁入分层文档并删除；`PLAN.md` → `operations/development_plan.md`
+- [x] `AGENTS.md` Project Doc 门禁；关键模块 `@project-doc` 锚点；README 指向 `docs/index.md`
+- 验证：`npm test` + `npm run typecheck`；`rg '@project-doc'` 路径与章节 ID 一致

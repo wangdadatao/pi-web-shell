@@ -9,7 +9,7 @@ interface Item {
   work: boolean;
 }
 
-const PLAN_PATH = fileURLToPath(new URL("../docs/PLAN.md", import.meta.url));
+const PLAN_PATH = fileURLToPath(new URL("../docs/operations/development_plan.md", import.meta.url));
 
 /**
  * Sections whose checkboxes are not todos.
@@ -25,7 +25,7 @@ async function main(): Promise<void> {
   const items = parseItems(markdown);
 
   if (items.length === 0) {
-    process.stdout.write("No checkbox items found in docs/PLAN.md\n");
+    process.stdout.write("No checkbox items found in docs/operations/development_plan.md\n");
     return;
   }
 

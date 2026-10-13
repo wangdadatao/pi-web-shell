@@ -4,6 +4,7 @@ import { applyExtensionUiState, emptyExtensionUiState } from "./extensionUi.ts";
 import { normalizeSessionKey } from "./paths.ts";
 import type { ActivityReason, ExtensionUiState } from "../shared/types.ts";
 
+// @project-doc docs/architecture/session_lifecycle.md#process_refs
 export interface ManagedSession {
   path: string;
   cwd: string;
