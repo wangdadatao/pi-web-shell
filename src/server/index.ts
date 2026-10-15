@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import type { AddressInfo } from "node:net";
+import { loadOrCreateAuthToken } from "./authToken.ts";
 import { loadConfig } from "./config.ts";
 import { SessionIndex } from "./sessionIndex.ts";
 import { SessionRegistry } from "./sessionRegistry.ts";
@@ -8,10 +9,11 @@ import { createApp } from "./httpServer.ts";
 
 async function main(): Promise<void> {
   const config = loadConfig();
+  const authToken = await loadOrCreateAuthToken(config.agentDir);
   const index = new SessionIndex(config.sessionsDir);
   const registry = new SessionRegistry(config);
   const branchMarks = new BranchMarkStore(defaultBranchMarkStorePath(config.agentDir));
-  const server = createApp({ config, index, registry, branchMarks });
+  const server = createApp({ config, index, registry, branchMarks, authToken });
 
   await new Promise<void>((resolve, reject) => {
     server.once("error", (error: NodeJS.ErrnoException) => {
@@ -30,7 +32,9 @@ async function main(): Promise<void> {
     server.listen(config.port, config.host, resolve);
   });
   const address = server.address() as AddressInfo;
-  const url = `http://${config.host}:${address.port}/`;
+  // Fragment, not query: the browser does not send it, so access logs and
+  // Referer cannot pick the token up from the page load itself.
+  const url = `http://${config.host}:${address.port}/#token=${encodeURIComponent(authToken)}`;
 
   process.stdout.write(
     [

@@ -215,6 +215,44 @@ body {
   }
 }
 
+#app[hidden] {
+  display: none;
+}
+
+.auth-gate {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: var(--bg);
+  z-index: 40;
+  padding: 24px;
+}
+
+.auth-gate[hidden] {
+  display: none;
+}
+
+.auth-gate-card {
+  max-width: 36rem;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 24px;
+}
+
+.auth-gate-card h1 {
+  font-size: 1.15rem;
+  font-weight: 600;
+  margin: 0 0 8px;
+}
+
+.auth-gate-card p {
+  color: var(--muted);
+  margin: 0;
+  line-height: 1.5;
+}
+
 #app {
   display: grid;
   grid-template-columns: 240px 280px 1fr;

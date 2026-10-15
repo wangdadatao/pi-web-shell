@@ -24,6 +24,16 @@ import { join } from "node:path";
 const BASE = process.argv[2] ?? null;
 const AGENT_DIR = process.argv[3] ?? null;
 
+/** Origin only, plus the install token from the startup URL fragment. */
+function apiUrl(baseUrl: string, path: string): { url: string; token: string } {
+  const url = new URL(baseUrl);
+  const token = new URLSearchParams(url.hash.replace(/^#/, "")).get("token") ?? "";
+  url.hash = "";
+  url.search = "";
+  url.pathname = path.startsWith("/") ? path : `/${path}`;
+  return { url: url.toString(), token };
+}
+
 const CHROME_CANDIDATES = [
   process.env.CHROME_BIN,
   "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
@@ -256,7 +266,10 @@ async function main(baseUrl: string, agentDir: string): Promise<void> {
 
     // 4) the environment payload now reports the saved state (fetched from
     // Node: Runtime.evaluate does not await page promises)
-    const envPayload = (await (await fetch(`${baseUrl}api/settings/environment`)).json()) as {
+    const environment = apiUrl(baseUrl, "/api/settings/environment");
+    const envPayload = (await (await fetch(environment.url, {
+      headers: { "X-Pi-Shell-Token": environment.token },
+    })).json()) as {
       editable: { values: Record<string, unknown> };
     };
     const env = envPayload.editable.values;

@@ -6,7 +6,7 @@
 
 | 命令 | 内容 |
 |------|------|
-| `npm test` | `node:test`，`test/*.test.ts`（当前 118 例量级） |
+| `npm test` | `node:test`，`test/*.test.ts`（含 API 凭证、来源、415、local-image 与不可信 HTML） |
 | `npm run typecheck` | `src/`、`test/`、`scripts/` 的 TS |
 | `npm run ui:test` | typecheck + 单测 + 全部 `scripts/ui-test-*.ts`（共享隔离 server） |
 | `npm run theme:check` | 与 pi 导出主题色比对 |

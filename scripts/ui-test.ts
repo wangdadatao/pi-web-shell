@@ -23,6 +23,17 @@ import { join } from "node:path";
 
 const repoRoot = join(import.meta.dirname, "..");
 
+/** Drop the fragment so logs never include the install token. */
+function redactUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    parsed.hash = "";
+    return parsed.toString();
+  } catch {
+    return url.replace(/#.*$/, "");
+  }
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -135,10 +146,10 @@ async function main(): Promise<void> {
     });
     if (!base || !(await waitForHttp(base))) {
       failed.push("server boot");
-      process.stderr.write(`server did not come up${base ? ` at ${base}` : ""}\n`);
+      process.stderr.write(`server did not come up${base ? ` at ${redactUrl(base)}` : ""}\n`);
     } else {
       console.log(`\n━━━ ui tests ` + "─".repeat(44));
-      console.log(`isolated server: ${base} (${sessionsDir})`);
+      console.log(`isolated server: ${redactUrl(base)} (${sessionsDir})`);
       for (const script of uiTests) {
         const label = script.slice(script.lastIndexOf("/") + 1);
         // The settings-edit test writes settings.json, so it gets the isolated

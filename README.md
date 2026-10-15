@@ -139,7 +139,7 @@ npm run shot -- <url> <out.png> --wait 6000 \
 - **运行时零依赖**：服务端只用 Node 内置模块；前端第三方库 vendor 进仓库，无构建步骤。
 - **只读历史**：列出会话只读文件头尾，不修改任何已有会话。
 - **不可信渲染**：模型输出、工具输出、文件内容全部先过 `DOMPurify` 再上屏；工具输出不做 Markdown 解释。
-- **本地安全边界**：默认只绑 `127.0.0.1`，并校验 Host 头（拒绝 DNS rebinding）；见 `src/server/hostCheck.ts`。
+- **本地安全边界**：默认只绑 `127.0.0.1` 并校验 Host 头；`/api` 还要安装级凭证和来源校验。启动时终端会打印带 `#token=` 的地址。见 [安全边界](docs/operations/security.md)。
 
 本项目基于 MIT 协议开源（见 [LICENSE](LICENSE)）。前端 vendored 库的许可证见
 [`src/web/vendor/README.md`](src/web/vendor/README.md)。

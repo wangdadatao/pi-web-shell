@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
@@ -35,7 +35,7 @@ describe("loadLocalImage", () => {
     const dir = await mkdtemp(join(tmpdir(), "local-img-"));
     const file = join(dir, "pic.png");
     await writeFile(file, PNG);
-    const result = await loadLocalImage(file);
+    const result = await loadLocalImage(file, dir);
     assert.ok(result.ok);
     assert.equal(result.mimeType, "image/png");
     assert.match(result.etag, /^"\d+-\d+"$/);
@@ -46,30 +46,46 @@ describe("loadLocalImage", () => {
     const dir = await mkdtemp(join(tmpdir(), "local-img-"));
     const disguised = join(dir, "totally-a-picture.png");
     await writeFile(disguised, "-----BEGIN RSA PRIVATE KEY-----\n...");
-    const result = await loadLocalImage(disguised);
+    const result = await loadLocalImage(disguised, dir);
     assert.ok(!result.ok);
     assert.equal(result.status, 415);
   });
 
   it("rejects relative and empty paths", async () => {
-    const relative = await loadLocalImage("images/pic.png");
+    const relative = await loadLocalImage("images/pic.png", "/tmp");
     assert.ok(!relative.ok);
     assert.equal(relative.status, 400);
-    const empty = await loadLocalImage("  ");
+    const empty = await loadLocalImage("  ", "/tmp");
     assert.ok(!empty.ok);
     assert.equal(empty.status, 400);
   });
 
   it("returns 404 for missing files and directories", async () => {
     const dir = await mkdtemp(join(tmpdir(), "local-img-"));
-    const missing = await loadLocalImage(join(dir, "nope.png"));
+    const missing = await loadLocalImage(join(dir, "nope.png"), dir);
     assert.ok(!missing.ok);
     assert.equal(missing.status, 404);
 
     const inner = join(dir, "sub");
     await mkdir(inner);
-    const asDirectory = await loadLocalImage(inner);
+    const asDirectory = await loadLocalImage(inner, dir);
     assert.ok(!asDirectory.ok);
     assert.equal(asDirectory.status, 404);
+  });
+
+  it("rejects files that resolve outside the session directory", async () => {
+    const root = await mkdtemp(join(tmpdir(), "local-img-root-"));
+    const outside = await mkdtemp(join(tmpdir(), "local-img-out-"));
+    const file = join(outside, "pic.png");
+    await writeFile(file, PNG);
+    const escaped = await loadLocalImage(file, root);
+    assert.ok(!escaped.ok);
+    assert.equal(escaped.status, 403);
+
+    const link = join(root, "via-link.png");
+    await symlink(file, link);
+    const viaLink = await loadLocalImage(link, root);
+    assert.ok(!viaLink.ok);
+    assert.equal(viaLink.status, 403);
   });
 });

@@ -36,7 +36,7 @@ pi --mode rpc 子进程（每个被 acquire 的会话至多一个写者）
 - **运行时零 npm 依赖**：服务端仅 Node 内置模块；前端第三方库 vendor 到 `src/web/vendor/`，无构建步骤。
 - **只读列历史**：索引会话只读 head 切片与有界的尾部命名回扫，不修改已有会话文件。
 - **不可信渲染**：模型/工具输出经 DOMPurify；工具结果不做 Markdown 二次解释。
-- **本地默认**：绑定 loopback + Host 头校验（见 [安全边界](../operations/security.md)）。
+- **本地默认**：绑定 loopback + Host 头校验；`/api` 另要安装级凭证和来源校验（见 [安全边界](../operations/security.md)）。
 
 <a id="module_map"></a>
 ## 模块地图
@@ -52,6 +52,8 @@ src/server/sessionRegistry.ts  子进程引用计数与生命周期
 src/server/piSession.ts      单个子进程 JSONL RPC
 src/server/paths.ts          会话路径 realpath 归一
 src/server/hostCheck.ts      Host 校验
+src/server/authToken.ts      安装级凭证文件
+src/server/requestGuard.ts   /api 凭证、来源、Content-Type
 src/server/treeView.ts       get_tree 重塑
 src/server/extensionUi.ts    扩展 UI 状态与响应塑形
 src/server/imageStore.ts     快照图片 LRU

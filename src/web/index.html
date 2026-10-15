@@ -8,28 +8,20 @@
     <!--
       Resolve the stored theme (and language) before the stylesheet applies,
       so a light-theme reload does not flash dark first. This mirrors the logic
-      in app.js `applyTheme()`; it cannot import it, because it must run
-      inline, before the first paint.
+      in app.js `applyTheme()`. It is an external script: the page CSP
+      disallows inline scripts, and a parser-blocking script in head still
+      runs before first paint.
     -->
-    <script>
-      (function () {
-        var pref = "system";
-        var locale = null;
-        try {
-          pref = localStorage.getItem("piShellTheme") || "system";
-          locale = localStorage.getItem("piShellLocale");
-        } catch (error) {
-          /* storage disabled: fall back to the defaults */
-        }
-        var light = window.matchMedia("(prefers-color-scheme: light)").matches;
-        document.documentElement.dataset.theme =
-          pref === "system" ? (light ? "light" : "dark") : pref;
-        if (locale) document.documentElement.lang = locale;
-      })();
-    </script>
+    <script src="/boot.js"></script>
     <link rel="stylesheet" href="/style.css" />
   </head>
   <body>
+    <div id="auth-gate" class="auth-gate" hidden>
+      <div class="auth-gate-card">
+        <h1 data-i18n="auth.title">需要重新打开终端里的链接</h1>
+        <p data-i18n="auth.body">这个页面没有有效的本地访问凭证。请回到启动 pi-web-shell 的终端，打开那里打印的完整地址（包含 #token= 的那一条）。</p>
+      </div>
+    </div>
     <div id="app">
       <aside id="folders" class="pane">
         <div class="pane-head">
@@ -177,11 +169,8 @@
       </div>
     </div>
 
-    <script>
-      // Load Prism as a classic script but stop it from auto-highlighting:
-      // every code block is highlighted explicitly when it is rendered.
-      window.Prism = { manual: true };
-    </script>
+    <!-- Prism must see `manual` before it evaluates, and the CSP forbids an inline script. -->
+    <script src="/prism-manual.js"></script>
     <script src="/vendor/prism.js"></script>
     <script src="/vendor/prism-languages.js"></script>
     <script type="module" src="/app.js"></script>

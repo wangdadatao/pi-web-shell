@@ -40,6 +40,8 @@ const MESSAGES = {
     "api.newSessionFailed": "新建会话失败: {status}",
     "api.renameFailed": "重命名失败: {status}",
     "api.deleteFailed": "删除失败: {status}",
+    "auth.title": "需要重新打开终端里的链接",
+    "auth.body": "这个页面没有有效的本地访问凭证。请回到启动 pi-web-shell 的终端，打开那里打印的完整地址（包含 #token= 的那一条）。",
 
     /* ---------- shared ---------- */
     "common.copy": "复制",
@@ -92,6 +94,7 @@ const MESSAGES = {
     "tree.cloneCancelled": "克隆被扩展取消了。",
     "mermaid.notLoaded": "mermaid 未加载",
     "mermaid.failed": "图表渲染失败：{message}",
+    "mermaid.blocked": "图表包含不允许的内容，已拒绝渲染",
 
     /* ---------- transcript ---------- */
     "msg.thinking": "思考",
@@ -391,6 +394,8 @@ const MESSAGES = {
     "api.newSessionFailed": "Failed to create session: {status}",
     "api.renameFailed": "Rename failed: {status}",
     "api.deleteFailed": "Delete failed: {status}",
+    "auth.title": "Open the link printed in the terminal",
+    "auth.body": "This page does not have a valid local access token. Go back to the terminal where pi-web-shell started and open the full URL printed there (it includes #token=).",
 
     /* ---------- shared ---------- */
     "common.copy": "Copy",
@@ -443,6 +448,7 @@ const MESSAGES = {
     "tree.cloneCancelled": "The clone was canceled by an extension.",
     "mermaid.notLoaded": "mermaid is not loaded",
     "mermaid.failed": "Diagram failed to render: {message}",
+    "mermaid.blocked": "The diagram contained content that is not allowed to render",
 
     /* ---------- transcript ---------- */
     "msg.thinking": "Thinking",

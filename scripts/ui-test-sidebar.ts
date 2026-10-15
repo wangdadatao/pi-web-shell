@@ -17,6 +17,16 @@ import { join } from "node:path";
 
 const BASE = process.argv[2] ?? "http://127.0.0.1:4711/";
 
+/**
+ * The first navigation must keep `#token=` so the page can store it. Later
+ * reloads use the bare origin: the page strips the fragment after that first
+ * load, and navigating back to the same hashed URL is only a fragment change.
+ */
+function reloadUrl(url: string): string {
+  const hash = url.indexOf("#");
+  return hash === -1 ? url : url.slice(0, hash);
+}
+
 const CHROME_CANDIDATES = [
   process.env.CHROME_BIN,
   "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
@@ -251,7 +261,7 @@ async function main(): Promise<void> {
     }
 
     // 9) persistence across reload (currently no-folders)
-    await cdp.send("Page.navigate", { url: BASE });
+    await cdp.send("Page.navigate", { url: reloadUrl(BASE) });
     await sleep(2000);
     ok((await sidebar()) === "no-folders" && Number(await paneW("sessions")) >= 200, "persisted: no-folders after reload");
     ok((await evalJs(`localStorage.getItem("piShellSidebar")`)) === "no-folders", "localStorage stores the stage");
@@ -259,7 +269,7 @@ async function main(): Promise<void> {
 
     // 10) legacy two-state value "0" migrates to fullscreen
     await evalJs(`localStorage.setItem("piShellSidebar", "0")`);
-    await cdp.send("Page.navigate", { url: BASE });
+    await cdp.send("Page.navigate", { url: reloadUrl(BASE) });
     await sleep(2000);
     ok((await sidebar()) === "fullscreen", `legacy "0" migrates to fullscreen`);
     t = await toggleHome();

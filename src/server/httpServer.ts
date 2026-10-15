@@ -9,6 +9,15 @@ import type { Config } from "./config.ts";
 import { isHostAllowed } from "./hostCheck.ts";
 import { ImageStore, isImageHash, stripInlineImages } from "./imageStore.ts";
 import { loadLocalImage } from "./localImage.ts";
+import {
+  CONTENT_SECURITY_POLICY,
+  isJsonContentType,
+  isOriginAllowed,
+  isWriteMethod,
+  presentedToken,
+  queryTokenAllowed,
+  tokenMatches,
+} from "./requestGuard.ts";
 import { collectEnvironment } from "./environment.ts";
 import { SettingsValidationError, applySettingsPatch, setMcpEnabled, writeAgentsMd } from "./settingsStore.ts";
 import { activeUserEntryIds, reshapeTree } from "./treeView.ts";
@@ -53,6 +62,8 @@ export interface ServerDeps {
   registry: SessionRegistry;
   /** Which forked/cloned children keep their parent listed (supersessions.ts). */
   branchMarks: BranchMarkStore;
+  /** Per-install secret. Required on every `/api` request. */
+  authToken: string;
 }
 
 export function createApp(deps: ServerDeps): Server {
@@ -75,12 +86,16 @@ export function createApp(deps: ServerDeps): Server {
       const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
       const route = `${req.method ?? "GET"} ${url.pathname}`;
 
+      if (url.pathname.startsWith("/api/") && !guardApi(req, res, url, deps.authToken)) {
+        return;
+      }
+
       if (url.pathname.startsWith("/api/image/")) {
         return serveImage(res, images, url.pathname.slice("/api/image/".length));
       }
 
       if (route === "GET /api/local-image") {
-        return serveLocalImage(req, res, url);
+        return serveLocalImage(req, res, url, deps);
       }
 
       if (route === "GET /api/sessions") {
@@ -574,7 +589,7 @@ async function handleStream(
   // Transcripts are text-heavy (thinking, tool arguments, tool output) and
   // compress ~5x. Frames are flushed individually so streaming stays live.
   const gzip = acceptsGzip(req) ? createGzip() : null;
-  res.writeHead(200, {
+  beginResponse(res, 200, {
     "Content-Type": "text/event-stream; charset=utf-8",
     "Cache-Control": "no-cache, no-transform",
     Connection: "keep-alive",
@@ -710,7 +725,7 @@ async function handleEvents(
 ): Promise<void> {
   const { registry } = deps;
   const gzip = acceptsGzip(req) ? createGzip() : null;
-  res.writeHead(200, {
+  beginResponse(res, 200, {
     "Content-Type": "text/event-stream; charset=utf-8",
     "Cache-Control": "no-cache, no-transform",
     Connection: "keep-alive",
@@ -863,7 +878,7 @@ function serveImage(res: ServerResponse, images: ImageStore, hash: string): void
   const image = images.get(hash);
   if (!image) return sendJson(res, 404, { error: "image not in cache" });
 
-  res.writeHead(200, {
+  beginResponse(res, 200, {
     "Content-Type": image.mimeType,
     "Content-Length": String(image.buffer.length),
     // The hash is the content, so this can never go stale.
@@ -878,17 +893,25 @@ function serveImage(res: ServerResponse, images: ImageStore, hash: string): void
  * Validation and magic-byte sniffing live in localImage.ts; only actual image
  * bytes can come out of this endpoint, so it never becomes a file read API.
  */
-async function serveLocalImage(req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
-  const result = await loadLocalImage(url.searchParams.get("path") ?? "");
+async function serveLocalImage(
+  req: IncomingMessage,
+  res: ServerResponse,
+  url: URL,
+  deps: ServerDeps,
+): Promise<void> {
+  const cwd = await lookupSessionCwd(deps, url.searchParams.get("session") ?? "");
+  if (!cwd) return sendJson(res, 404, { error: "session not found" });
+
+  const result = await loadLocalImage(url.searchParams.get("path") ?? "", cwd);
   if (!result.ok) return sendJson(res, result.status, { error: result.error });
 
   if (req.headers["if-none-match"] === result.etag) {
-    res.writeHead(304, { ETag: result.etag });
+    beginResponse(res, 304, { ETag: result.etag });
     res.end();
     return;
   }
 
-  res.writeHead(200, {
+  beginResponse(res, 200, {
     "Content-Type": result.mimeType,
     "Content-Length": String(result.buffer.length),
     ETag: result.etag,
@@ -897,6 +920,16 @@ async function serveLocalImage(req: IncomingMessage, res: ServerResponse, url: U
     "Cache-Control": "private, max-age=3600",
   });
   res.end(result.buffer);
+}
+
+/** cwd of an open subprocess, or of a session file the index already knows. */
+async function lookupSessionCwd(deps: ServerDeps, sessionPath: string): Promise<string | null> {
+  if (sessionPath.trim() === "") return null;
+  const key = normalizeSessionKey(sessionPath);
+  const live = deps.registry.get(key);
+  if (live) return live.cwd;
+  const summary = await deps.index.get(key);
+  return summary?.cwd ?? null;
 }
 
 async function getState(rpc: { send: <T>(c: Record<string, unknown>) => Promise<T> }): Promise<PiSessionState> {
@@ -1014,11 +1047,44 @@ function sendJson(res: ServerResponse, status: number, payload: unknown): void {
   const body = JSON.stringify(payload);
   // No, not even the session list: the whole point of this app is that a
   // running server and a browser tab never disagree about the current state.
-  res.writeHead(status, {
+  beginResponse(res, status, {
     "Content-Type": "application/json; charset=utf-8",
     "Cache-Control": "no-store, must-revalidate",
+    "Content-Length": String(Buffer.byteLength(body)),
   });
   res.end(body);
+}
+
+/**
+ * Token, origin, and write-content-type checks for `/api`.
+ *
+ * Returns false when a response has already been sent. Static files are not
+ * passed here: the page itself has to load before it can present the token.
+ */
+function guardApi(req: IncomingMessage, res: ServerResponse, url: URL, authToken: string): boolean {
+  if (!isOriginAllowed(req.headers, req.headers.host)) {
+    sendJson(res, 403, { error: "cross-origin request rejected" });
+    return false;
+  }
+  const presented = presentedToken(req.headers, url, queryTokenAllowed(req.method, url.pathname));
+  if (!tokenMatches(presented, authToken)) {
+    sendJson(res, 401, { error: "unauthorized" });
+    return false;
+  }
+  const contentType = typeof req.headers["content-type"] === "string" ? req.headers["content-type"] : undefined;
+  if (isWriteMethod(req.method) && !isJsonContentType(contentType)) {
+    sendJson(res, 415, { error: "Content-Type must be application/json" });
+    return false;
+  }
+  return true;
+}
+
+function beginResponse(res: ServerResponse, status: number, headers: Record<string, string>): void {
+  res.writeHead(status, {
+    "Referrer-Policy": "no-referrer",
+    "Content-Security-Policy": CONTENT_SECURITY_POLICY,
+    ...headers,
+  });
 }
 
 async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {
@@ -1047,7 +1113,7 @@ async function serveStatic(pathname: string, res: ServerResponse): Promise<void>
     const type = MIME[extname(target)] ?? "application/octet-stream";
     // This is a local app that gets edited while running: never let the browser
     // reuse a stale bundle, or a fix can appear to do nothing after a reload.
-    res.writeHead(200, { "Content-Type": type, "Cache-Control": "no-store, must-revalidate" });
+    beginResponse(res, 200, { "Content-Type": type, "Cache-Control": "no-store, must-revalidate" });
     res.end(file);
   } catch {
     sendJson(res, 404, { error: "not found" });

@@ -6,6 +6,7 @@
 ## 导航
 
 - [HTTP 路由](#http_routes)
+- [API 鉴权](#api_auth)
 - [SSE 帧](#sse_frames)
 - [长连接重连](#sse_reconnect)
 - [后台 activity](#background_activity)
@@ -26,7 +27,7 @@
 | POST | `/api/fork` | `{ entryId }` 或 `{ fromEnd }`；含 `sessionFile` |
 | POST | `/api/clone` | 副本路径 |
 | GET | `/api/image/<sha1>` | 快照图片字节 |
-| GET | `/api/local-image?path=` | 正文本地图；魔数 PNG/JPEG/GIF/WEBP |
+| GET | `/api/local-image?path=&session=` | 会话 cwd 内的本地图；魔数 PNG/JPEG/GIF/WEBP |
 | POST | `/api/prompt` | 发消息；流式中 followUp |
 | POST | `/api/compact` | `compact` RPC；运行中/已在压缩 → 409；RPC 超时 → `{pending:true}` |
 | POST | `/api/ui-response` | 扩展 UI 答案 |
@@ -43,6 +44,17 @@
 | GET | `/` | 静态 `src/web`；`/settings` SPA 回落 index.html |
 
 静态资源：`Cache-Control: no-store`（避免旧 `app.js`）。
+
+<a id="api_auth"></a>
+## API 鉴权
+
+`/api` 在路由处理之前检查来源和安装级凭证；写方法还要求 `Content-Type: application/json`，否则 **415**。规则见 [安全边界](../operations/security.md#auth_token)。
+
+- `fetch`：请求头 `X-Pi-Shell-Token`。
+- `EventSource` 与图片 GET：查询参数 `token`（这些客户端不能设请求头）。
+- 跨站 `Origin` / `Sec-Fetch-Site`：**403**。缺凭证或凭证不对：**401**。
+
+静态页面（`/`、`/settings`）不带凭证也能取到，前端再从 `#token=` 或 `localStorage` 取出凭证去调 API。
 
 <a id="sse_frames"></a>
 ## SSE 帧

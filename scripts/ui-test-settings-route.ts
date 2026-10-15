@@ -21,6 +21,15 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+/** Origin only. The startup URL's fragment holds the token and must not be concatenated onto a path. */
+function bareOrigin(baseUrl: string): string {
+  const url = new URL(baseUrl);
+  url.hash = "";
+  url.search = "";
+  url.pathname = "/";
+  return url.toString();
+}
+
 const CHROME_CANDIDATES = [
   process.env.CHROME_BIN,
   "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
@@ -236,7 +245,7 @@ async function main(baseUrl: string): Promise<void> {
     ok(s6.view === "chat" && s6.path === "/", `Escape: chat at "/" (got ${s6.view} at ${s6.path})`);
 
     // 7) deep link / refresh on /settings: server serves the shell, boot restores the view
-    await cdp.send("Page.navigate", { url: `${baseUrl}settings` });
+    await cdp.send("Page.navigate", { url: `${bareOrigin(baseUrl)}settings` });
     await sleep(2500);
     const s7 = await state();
     ok(s7.appAlive && s7.view === "settings" && s7.path === "/settings", `deep link: app boots into settings (got ${s7.view} at ${s7.path}, alive=${s7.appAlive})`);
