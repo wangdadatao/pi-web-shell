@@ -101,6 +101,7 @@ async function startApp(options: {
       },
     },
     branchMarks: { keepParentChildren: async () => new Set<string>() },
+    authToken: "compact-test-token",
   } as unknown as ServerDeps;
 
   const server: Server = createApp(deps);
@@ -112,7 +113,7 @@ async function startApp(options: {
     post: async (body: unknown) => {
       const res = await fetch(`http://127.0.0.1:${port}/api/compact`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "X-Pi-Shell-Token": "compact-test-token" },
         body: JSON.stringify(body),
       });
       return { status: res.status, data: (await res.json()) as Record<string, unknown> };

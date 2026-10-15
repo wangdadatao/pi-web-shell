@@ -1,26 +1,38 @@
 import { readFile, realpath, stat } from "node:fs/promises";
-import { isAbsolute, resolve } from "node:path";
+import { isAbsolute, resolve, sep } from "node:path";
+
+// @project-doc docs/operations/security.md#local_image
 
 /** Refuse absurdly large files: model-generated images are a few MB at most. */
 const MAX_LOCAL_IMAGE_BYTES = 64 * 1024 * 1024;
 
 export type LocalImageResult =
   | { ok: true; buffer: Buffer; mimeType: string; etag: string }
-  | { ok: false; status: 400 | 404 | 413 | 415; error: string };
+  | { ok: false; status: 400 | 403 | 404 | 413 | 415; error: string };
 
 /**
  * Load an image from an absolute filesystem path, for the `/api/local-image`
  * endpoint that backs local images in assistant Markdown (`![alt](/abs/x.png)`).
  *
- * The type is decided by magic bytes, never by extension: that is what keeps
- * this endpoint from turning into an arbitrary-file read. Only actual
- * PNG/JPEG/GIF/WEBP bytes can ever leave the process, and the server itself
- * only listens on 127.0.0.1.
+ * Two independent limits apply. The file must resolve inside `root` (the
+ * session's cwd, after symlink resolution). The type is decided by magic
+ * bytes, never by extension. Only actual PNG/JPEG/GIF/WEBP bytes can leave.
  */
-export async function loadLocalImage(rawPath: string): Promise<LocalImageResult> {
+export async function loadLocalImage(rawPath: string, root: string): Promise<LocalImageResult> {
   const requested = rawPath.trim();
   if (requested === "" || !isAbsolute(requested)) {
     return { ok: false, status: 400, error: "path must be absolute" };
+  }
+
+  let rootReal: string;
+  try {
+    rootReal = await realpath(resolve(root));
+    const rootInfo = await stat(rootReal);
+    if (!rootInfo.isDirectory()) {
+      return { ok: false, status: 403, error: "session directory is not available" };
+    }
+  } catch {
+    return { ok: false, status: 403, error: "session directory is not available" };
   }
 
   let resolved: string;
@@ -30,6 +42,9 @@ export async function loadLocalImage(rawPath: string): Promise<LocalImageResult>
     info = await stat(resolved);
   } catch {
     return { ok: false, status: 404, error: "file not found" };
+  }
+  if (!isInside(rootReal, resolved)) {
+    return { ok: false, status: 403, error: "image is outside the session directory" };
   }
   if (!info.isFile()) return { ok: false, status: 404, error: "not a file" };
   if (info.size > MAX_LOCAL_IMAGE_BYTES) {
@@ -74,4 +89,8 @@ export function sniffImageMime(buffer: Buffer): string | null {
     return "image/webp";
   }
   return null;
+}
+
+function isInside(root: string, target: string): boolean {
+  return target === root || target.startsWith(root + sep);
 }

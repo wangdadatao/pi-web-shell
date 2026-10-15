@@ -1,4 +1,4 @@
-import { appendFile, mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdtemp, mkdir, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
@@ -55,6 +55,12 @@ describe("SessionIndex", () => {
         line({ type: "message", id: "u1", parentId: null, message: { role: "user", content: "重构" } }) +
         line({ type: "session_info", id: "i1", parentId: "u1", name: "重构 auth" }),
     );
+    // Folder order is by mtime. Back-to-back writes can share one timestamp
+    // on a coarse clock, so pin them apart.
+    const older = new Date("2024-12-03T14:00:00.000Z");
+    const newer = new Date("2024-12-04T10:00:00.000Z");
+    await utimes(join(dirA, "2024-12-03T14-00-00-000Z_aaa.jsonl"), older, older);
+    await utimes(join(dirB, "2024-12-04T10-00-00-000Z_bbb.jsonl"), newer, newer);
   });
 
   after(async () => {

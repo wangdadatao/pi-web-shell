@@ -40,6 +40,8 @@ const MESSAGES = {
     "api.newSessionFailed": "新建会话失败: {status}",
     "api.renameFailed": "重命名失败: {status}",
     "api.deleteFailed": "删除失败: {status}",
+    "auth.title": "需要重新打开终端里的链接",
+    "auth.body": "这个页面没有有效的本地访问凭证。交互式启动时，打开终端里打印的完整地址（含 #token=）。常驻服务不会把凭证写进日志：读取本机 web-shell-token 文件，用同一地址加上 #token=文件内容 打开。",
 
     /* ---------- shared ---------- */
     "common.copy": "复制",
@@ -92,6 +94,7 @@ const MESSAGES = {
     "tree.cloneCancelled": "克隆被扩展取消了。",
     "mermaid.notLoaded": "mermaid 未加载",
     "mermaid.failed": "图表渲染失败：{message}",
+    "mermaid.blocked": "图表包含不允许的内容，已拒绝渲染",
 
     /* ---------- transcript ---------- */
     "msg.thinking": "思考",
@@ -391,6 +394,8 @@ const MESSAGES = {
     "api.newSessionFailed": "Failed to create session: {status}",
     "api.renameFailed": "Rename failed: {status}",
     "api.deleteFailed": "Delete failed: {status}",
+    "auth.title": "Open the link printed in the terminal",
+    "auth.body": "This page does not have a valid local access token. For an interactive start, open the full URL printed in the terminal (it includes #token=). The service does not write the token to its log: read the web-shell-token file and open the same address with #token= set to the file contents.",
 
     /* ---------- shared ---------- */
     "common.copy": "Copy",
@@ -443,6 +448,7 @@ const MESSAGES = {
     "tree.cloneCancelled": "The clone was canceled by an extension.",
     "mermaid.notLoaded": "mermaid is not loaded",
     "mermaid.failed": "Diagram failed to render: {message}",
+    "mermaid.blocked": "The diagram contained content that is not allowed to render",
 
     /* ---------- transcript ---------- */
     "msg.thinking": "Thinking",

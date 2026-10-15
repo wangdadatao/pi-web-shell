@@ -94,8 +94,8 @@ npm run plan         # 查看开发账本进度与下一项（docs/operations/de
 
 - `RunAtLoad` — 登录/开机就启动，不用手点
 - `KeepAlive` — 进程挂了自动拉起
-- `PI_SHELL_OPEN_BROWSER=0` — 服务模式不会登录就弹浏览器，需要时自己开 <http://127.0.0.1:4711/>
-- 日志：`~/Library/Logs/pi-web-shell/{stdout,stderr}.log`
+- `PI_SHELL_OPEN_BROWSER=0` — 服务模式不会登录就弹浏览器。日志里没有凭证；读取 `~/.pi/agent/web-shell-token`，打开 `http://127.0.0.1:4711/#token=<文件内容>`
+- 日志：`~/Library/Logs/pi-web-shell/{stdout,stderr}.log`（目录 `0700`，文件 `0600`，不含凭证）
 
 **PATH 是这里唯一的坑**：launchd 不读你的 shell 配置。所以真正被启动的是
 `scripts/launchd-run.sh`，它先 source `~/.nvm/nvm.sh`，再用 `~/.nvm/alias/default`
@@ -122,6 +122,7 @@ LaunchAgent 是对的工具。真要在别的机器上跑再上 Docker。
 ```bash
 npm test                       # 单元测试
 npm run typecheck              # 类型检查
+npm run ui:test                # 需要 CHROME_BIN 指向 Chrome/Chromium
 npm run theme:check            # 我们的 Markdown/语法配色是否还和 pi 主题一致
 npm run shot -- <url> <out.png> --wait 6000 \
   --eval "document.getElementById('input').value"
@@ -139,7 +140,7 @@ npm run shot -- <url> <out.png> --wait 6000 \
 - **运行时零依赖**：服务端只用 Node 内置模块；前端第三方库 vendor 进仓库，无构建步骤。
 - **只读历史**：列出会话只读文件头尾，不修改任何已有会话。
 - **不可信渲染**：模型输出、工具输出、文件内容全部先过 `DOMPurify` 再上屏；工具输出不做 Markdown 解释。
-- **本地安全边界**：默认只绑 `127.0.0.1`，并校验 Host 头（拒绝 DNS rebinding）；见 `src/server/hostCheck.ts`。
+- **本地安全边界**：默认只绑 `127.0.0.1` 并校验 Host 头；`/api` 还要安装级凭证和来源校验。交互式终端会打印带 `#token=` 的地址；日志和常驻服务不打印凭证。绑定局域网地址时仍是明文 HTTP。见 [安全边界](docs/operations/security.md)。
 
 本项目基于 MIT 协议开源（见 [LICENSE](LICENSE)）。前端 vendored 库的许可证见
 [`src/web/vendor/README.md`](src/web/vendor/README.md)。

@@ -26,8 +26,10 @@
 路径：`marked.parse` → `DOMPurify.sanitize` → `innerHTML`。  
 流式阶段为纯文本；`text_end` 后重渲染为 Markdown。
 
+页面 CSP 不允许内联脚本。主题闪烁和 Prism `manual` 因此放在独立脚本里，而不是 `index.html` 的内联脚本。
+
 - 代码块：`Prism.manual`，未标注语言不猜测。
-- ```mermaid：占位块 + `MutationObserver` 串行 `mermaid.render`；源码放文本节点（非 `data-*`，防 DOMPurify/`-->`）；`securityLevel: 'strict'`；脚本按需加载 ~3.4MB。
+- ```mermaid：占位块 + `MutationObserver` 串行 `mermaid.render`；源码放文本节点（非 `data-*`，防 DOMPurify/`-->`）；`securityLevel: 'strict'`；脚本按需加载 ~3.4MB。插入前用 DOMPurify 的 SVG 配置清洗（保留 `foreignObject` 与 `<style>`）；清洗后仍含 `script`、事件属性或 `javascript:` 的 SVG 不插入。是否继续保留 Mermaid 尚未决定，渲染路径本身保持可用。
 - 流式边界：`liveMarkdown.js` 的 `findStableEnd` / `continuesList` 避免截断围栏。
 
 配色变量对齐 pi 主题：`npm run theme:check` 比对 dark/light 各 18 项。

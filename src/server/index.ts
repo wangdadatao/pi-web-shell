@@ -1,17 +1,20 @@
 import { spawn } from "node:child_process";
 import type { AddressInfo } from "node:net";
+import { AuthTokenError, authTokenPath, loadOrCreateAuthToken } from "./authToken.ts";
 import { loadConfig } from "./config.ts";
 import { SessionIndex } from "./sessionIndex.ts";
 import { SessionRegistry } from "./sessionRegistry.ts";
+import { formatStartupBanner, nonLoopbackWarning, tokenizedUrl } from "./startupNotice.ts";
 import { BranchMarkStore, defaultBranchMarkStorePath } from "./supersessions.ts";
 import { createApp } from "./httpServer.ts";
 
 async function main(): Promise<void> {
   const config = loadConfig();
+  const authToken = await loadOrCreateAuthToken(config.agentDir);
   const index = new SessionIndex(config.sessionsDir);
   const registry = new SessionRegistry(config);
   const branchMarks = new BranchMarkStore(defaultBranchMarkStorePath(config.agentDir));
-  const server = createApp({ config, index, registry, branchMarks });
+  const server = createApp({ config, index, registry, branchMarks, authToken });
 
   await new Promise<void>((resolve, reject) => {
     server.once("error", (error: NodeJS.ErrnoException) => {
@@ -30,18 +33,23 @@ async function main(): Promise<void> {
     server.listen(config.port, config.host, resolve);
   });
   const address = server.address() as AddressInfo;
-  const url = `http://${config.host}:${address.port}/`;
-
+  // Fragment, not query: the browser does not send it, so access logs and
+  // Referer cannot pick the token up from the page load itself.
+  // Only a terminal sees the fragment. LaunchAgent stdout is a log file.
+  const url = tokenizedUrl(config.host, address.port, authToken);
   process.stdout.write(
-    [
-      "",
-      "  pi-web-shell running",
-      `  → ${url}`,
-      `  sessions: ${config.sessionsDir}`,
-      `  pi binary: ${config.piBin}`,
-      "",
-    ].join("\n") + "\n",
+    formatStartupBanner({
+      host: config.host,
+      port: address.port,
+      sessionsDir: config.sessionsDir,
+      piBin: config.piBin,
+      authToken,
+      tokenPath: authTokenPath(config.agentDir),
+      revealToken: process.stdout.isTTY === true,
+    }),
   );
+  const warning = nonLoopbackWarning(config.host);
+  if (warning) process.stderr.write(warning);
 
   if (config.openBrowser) openBrowser(url);
 
@@ -68,9 +76,13 @@ function openBrowser(url: string): void {
 
 main().catch((error) => {
   const message = error instanceof Error ? error.message : String(error);
-  process.stderr.write(`[pi-shell] fatal: ${message}\n`);
-  if (process.env["PI_SHELL_DEBUG"] && error instanceof Error && error.stack) {
-    process.stderr.write(`${error.stack}\n`);
+  if (error instanceof AuthTokenError) {
+    process.stderr.write(`[pi-shell] ${message}\n`);
+  } else {
+    process.stderr.write(`[pi-shell] fatal: ${message}\n`);
+    if (process.env["PI_SHELL_DEBUG"] && error instanceof Error && error.stack) {
+      process.stderr.write(`${error.stack}\n`);
+    }
   }
   process.exit(1);
 });

@@ -1,31 +1,78 @@
 /* global EventSource, fetch, document, window, FileReader, requestAnimationFrame */
 
 import { marked } from "./vendor/marked.esm.js";
-import DOMPurify from "./vendor/purify.es.mjs";
 import { LOCALES, getLocale, setLocale, t } from "./i18n.js";
 import { continuesList, findStableEnd } from "./liveMarkdown.js";
+import { escapeText, mermaidSvgForInsert, renderMermaidPlaceholder, sanitizeHtml } from "./untrustedHtml.js";
 
 marked.setOptions({ gfm: true, breaks: true });
 
 /** Loaded as a classic script in index.html (with `manual: true`). */
 const prism = globalThis.Prism;
 
-// Open links in a new tab; never leak the opener.
-DOMPurify.addHook("afterSanitizeAttributes", (node) => {
-  if (node.tagName === "A") {
-    node.setAttribute("target", "_blank");
-    node.setAttribute("rel", "noopener noreferrer");
+const TOKEN_STORAGE_KEY = "piShellToken";
+const TOKEN_HEADER = "X-Pi-Shell-Token";
+
+/**
+ * The startup URL carries the token in the fragment. Store it and drop the
+ * fragment so the address bar and any later copy of the URL do not keep it.
+ * Later visits to the bare origin reuse localStorage.
+ */
+function installPageToken() {
+  const params = new URLSearchParams(location.hash.replace(/^#/, ""));
+  const fromHash = params.get("token");
+  if (!fromHash) return;
+  try {
+    localStorage.setItem(TOKEN_STORAGE_KEY, fromHash);
+  } catch {
+    /* storage disabled: the next API call will show the gate */
   }
-});
+  params.delete("token");
+  const rest = params.toString();
+  history.replaceState(null, "", location.pathname + location.search + (rest ? `#${rest}` : ""));
+}
+
+function pageToken() {
+  try {
+    return localStorage.getItem(TOKEN_STORAGE_KEY) || "";
+  } catch {
+    return "";
+  }
+}
+
+function withAuthQuery(path) {
+  const url = new URL(path, location.origin);
+  url.searchParams.set("token", pageToken());
+  return `${url.pathname}${url.search}`;
+}
+
+function showAuthGate() {
+  const gate = document.getElementById("auth-gate");
+  if (gate) gate.hidden = false;
+  const app = document.getElementById("app");
+  if (app) app.hidden = true;
+}
+
+async function apiFetch(url, options = {}) {
+  const headers = { [TOKEN_HEADER]: pageToken(), ...(options.headers || {}) };
+  const res = await fetch(url, { ...options, headers });
+  if (res.status === 401) {
+    showAuthGate();
+    throw new Error(t("auth.body"));
+  }
+  return res;
+}
+
+installPageToken();
 
 const api = {
   async sessions() {
-    const res = await fetch("/api/sessions");
+    const res = await apiFetch("/api/sessions");
     if (!res.ok) throw new Error(t("api.sessionsFailed", { status: res.status }));
     return res.json();
   },
   async prompt(path, message, images) {
-    const res = await fetch("/api/prompt", {
+    const res = await apiFetch("/api/prompt", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ path, message, images }),
@@ -35,7 +82,7 @@ const api = {
     return data;
   },
   async compact(path, customInstructions) {
-    const res = await fetch("/api/compact", {
+    const res = await apiFetch("/api/compact", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ path, customInstructions }),
@@ -45,7 +92,7 @@ const api = {
     return data;
   },
   async abort(path) {
-    const res = await fetch("/api/abort", {
+    const res = await apiFetch("/api/abort", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ path }),
@@ -62,7 +109,7 @@ const api = {
    * a dead session shows up on the stream rather than here.
    */
   async uiResponse(path, payload) {
-    const res = await fetch("/api/ui-response", {
+    const res = await apiFetch("/api/ui-response", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ path, ...payload }),
@@ -72,17 +119,17 @@ const api = {
     return data;
   },
   async models(path) {
-    const res = await fetch(`/api/models?path=${encodeURIComponent(path)}`);
+    const res = await apiFetch(`/api/models?path=${encodeURIComponent(path)}`);
     if (!res.ok) throw new Error(t("api.modelsFailed", { status: res.status }));
     return res.json();
   },
   async commands(path) {
-    const res = await fetch(`/api/commands?path=${encodeURIComponent(path)}`);
+    const res = await apiFetch(`/api/commands?path=${encodeURIComponent(path)}`);
     if (!res.ok) throw new Error(t("api.commandsFailed", { status: res.status }));
     return res.json();
   },
   async setModel(path, provider, modelId) {
-    const res = await fetch("/api/model", {
+    const res = await apiFetch("/api/model", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ path, provider, modelId }),
@@ -92,7 +139,7 @@ const api = {
     return data;
   },
   async setThinking(path, level) {
-    const res = await fetch("/api/thinking", {
+    const res = await apiFetch("/api/thinking", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ path, level }),
@@ -103,7 +150,7 @@ const api = {
   },
   /** Settings page: cross-session token totals (read-only). */
   async settingsUsage() {
-    const res = await fetch("/api/settings/usage");
+    const res = await apiFetch("/api/settings/usage");
     // A 404 here almost always means the server process is older than this
     // page — the frontend is served from disk, so a reload shows new UI first.
     if (res.status === 404) throw new Error(t("api.serverOutdated"));
@@ -112,14 +159,14 @@ const api = {
   },
   /** Settings page: what pi will load (read-only). */
   async settingsEnvironment() {
-    const res = await fetch("/api/settings/environment");
+    const res = await apiFetch("/api/settings/environment");
     if (res.status === 404) throw new Error(t("api.serverOutdated"));
     if (!res.ok) throw new Error(t("api.environmentFailed", { status: res.status }));
     return res.json();
   },
   /** Whitelisted patch against pi's settings.json; see settingsStore.ts. */
   async saveSettings(patch) {
-    const res = await fetch("/api/settings/save", {
+    const res = await apiFetch("/api/settings/save", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(patch),
@@ -131,7 +178,7 @@ const api = {
   },
   /** Replace the agent dir's AGENTS.md (global instructions). */
   async saveAgentsMd(content) {
-    const res = await fetch("/api/settings/agents-md", {
+    const res = await apiFetch("/api/settings/agents-md", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ content }),
@@ -143,7 +190,7 @@ const api = {
   },
   /** Toggle one MCP server's enabled flag in mcp.json. */
   async setMcpEnabled(name, enabled) {
-    const res = await fetch("/api/settings/mcp", {
+    const res = await apiFetch("/api/settings/mcp", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name, enabled }),
@@ -155,7 +202,7 @@ const api = {
   },
   /** Branch tree of the open session (light reshape of pi's get_tree). */
   async tree(path) {
-    const res = await fetch(`/api/tree?path=${encodeURIComponent(path)}`);
+    const res = await apiFetch(`/api/tree?path=${encodeURIComponent(path)}`);
     if (res.status === 404) throw new Error(t("api.serverOutdated"));
     if (!res.ok) throw new Error(t("api.treeFailed", { status: res.status }));
     return res.json();
@@ -168,7 +215,7 @@ const api = {
    * model-facing messages carry no entry ids).
    */
   async fork(path, target) {
-    const res = await fetch("/api/fork", {
+    const res = await apiFetch("/api/fork", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ path, ...target }),
@@ -180,7 +227,7 @@ const api = {
   },
   /** Duplicate the active branch into a new session. */
   async clone(path) {
-    const res = await fetch("/api/clone", {
+    const res = await apiFetch("/api/clone", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ path }),
@@ -191,7 +238,7 @@ const api = {
     return data;
   },
   async newSession(cwd) {
-    const res = await fetch("/api/sessions/new", {
+    const res = await apiFetch("/api/sessions/new", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ cwd }),
@@ -201,7 +248,7 @@ const api = {
     return data;
   },
   async rename(path, name) {
-    const res = await fetch("/api/rename", {
+    const res = await apiFetch("/api/rename", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ path, name }),
@@ -211,7 +258,7 @@ const api = {
     return data;
   },
   async deleteSession(path) {
-    const res = await fetch("/api/delete", {
+    const res = await apiFetch("/api/delete", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ path }),
@@ -221,7 +268,7 @@ const api = {
     return data;
   },
   async deleteFolderSessions(cwd) {
-    const res = await fetch("/api/delete-folder", {
+    const res = await apiFetch("/api/delete-folder", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ cwd }),
@@ -380,13 +427,13 @@ const state = {
 // ---------------------------------------------------------------- rendering
 
 function esc(text) {
-  return String(text).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+  return escapeText(text);
 }
 
 /** Markdown → sanitized HTML fragment (no wrapper), for incremental assembly. */
 function renderMarkdownHtml(text) {
   if (!text) return "";
-  return DOMPurify.sanitize(marked.parse(String(text)));
+  return sanitizeHtml(marked.parse(String(text)));
 }
 
 /** Render model/user prose as sanitized Markdown. */
@@ -446,14 +493,11 @@ marked.use({
  * gives the copy button something to read for rendered and failed blocks alike.
  */
 function renderMermaidBlock(source) {
-  return (
-    `<div class="mermaid-block">` +
-    `<div class="code-head"><span class="code-lang">mermaid</span>` +
-    `<button class="copy-btn" type="button" data-copy="diagram" aria-label="${t("common.copyDiagram")}">${t("common.copy")}</button></div>` +
-    `<div class="mermaid-body"><span class="mermaid-pending">${t("mermaid.rendering")}</span></div>` +
-    `<pre class="mermaid-source" hidden><code>${esc(source)}</code></pre>` +
-    `</div>`
-  );
+  return renderMermaidPlaceholder(source, {
+    copyLabel: t("common.copyDiagram"),
+    copy: t("common.copy"),
+    pending: t("mermaid.rendering"),
+  });
 }
 
 // ----------------------------------------------------------------- mermaid
@@ -531,7 +575,14 @@ async function renderMermaidDiagrams(targets) {
     const id = `pi-mermaid-${(mermaidSerial += 1)}`;
     try {
       const { svg } = await api.render(id, source);
-      node.innerHTML = svg;
+      const safe = mermaidSvgForInsert(svg);
+      if (!safe) {
+        document.getElementById(`d${id}`)?.remove();
+        document.getElementById(id)?.remove();
+        failMermaid(node, t("mermaid.blocked"));
+        continue;
+      }
+      node.innerHTML = safe;
       node.dataset.mermaidState = "done";
     } catch (error) {
       // Mermaid parks its own error graphic in the body; ours replaces it.
@@ -594,7 +645,12 @@ function localImageSrc(href) {
   } else if (raw.startsWith("/") && !raw.startsWith("/api/")) {
     path = raw;
   }
-  return path ? `/api/local-image?path=${encodeURIComponent(path)}` : null;
+  if (!path || !state.path) return null;
+  const params = new URLSearchParams();
+  params.set("path", path);
+  params.set("session", state.path);
+  params.set("token", pageToken());
+  return `/api/local-image?${params.toString()}`;
 }
 
 function renderBlock(block) {
@@ -624,7 +680,7 @@ function renderImage(block) {
 }
 
 function imageSrc(block) {
-  if (block.hash) return `/api/image/${block.hash}`;
+  if (block.hash) return withAuthQuery(`/api/image/${block.hash}`);
   if (block.data) return `data:${block.mimeType || "image/png"};base64,${block.data}`;
   return "";
 }
@@ -1644,7 +1700,7 @@ async function openSession(session) {
  * then stop and say so instead of looping invisibly in the background.
  */
 function openSessionStream(session) {
-  const stream = new EventSource(`/api/stream?path=${encodeURIComponent(session.path)}`);
+  const stream = new EventSource(withAuthQuery(`/api/stream?path=${encodeURIComponent(session.path)}`));
   state.stream = stream;
   state.streamEnded = false;
 
@@ -2949,7 +3005,7 @@ async function refreshSessionList() {
  * on its own if it drops.
  */
 function openActivityStream() {
-  const source = new EventSource("/api/events");
+  const source = new EventSource(withAuthQuery("/api/events"));
   source.onmessage = (event) => {
     let frame;
     try {

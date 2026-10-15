@@ -30,6 +30,26 @@ export PATH
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$PROJECT_DIR"
 
+# launchd creates StandardOutPath/StandardErrorPath before this script runs,
+# often mode 0644. Tighten them so a previous or future banner cannot sit
+# world-readable. chmod the log itself; do not follow a symlink.
+LOG_DIR="${HOME}/Library/Logs/pi-web-shell"
+if [ -d "$LOG_DIR" ]; then
+  chmod 700 "$LOG_DIR" || true
+  for log in stdout.log stderr.log; do
+    target="$LOG_DIR/$log"
+    if [ -L "$target" ]; then
+      rm -f "$target"
+    fi
+    if [ ! -e "$target" ]; then
+      touch "$target"
+    fi
+    if [ -f "$target" ] && [ ! -L "$target" ]; then
+      chmod 600 "$target" || true
+    fi
+  done
+fi
+
 if ! command -v node >/dev/null 2>&1; then
   echo "[pi-web-shell] node not found on PATH=$PATH" >&2
   echo "[pi-web-shell] fix scripts/launchd-run.sh or install Node 22.19+" >&2
