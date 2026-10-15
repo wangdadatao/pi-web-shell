@@ -17,7 +17,7 @@
  */
 
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdtemp, readdir } from "node:fs/promises";
+import { mkdtemp, readFile, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -32,6 +32,15 @@ function redactUrl(url: string): string {
   } catch {
     return url.replace(/#.*$/, "");
   }
+}
+
+/** Piped servers omit the fragment. The token file is the same value the page needs. */
+async function attachToken(url: string, agentDir: string): Promise<string> {
+  if (url.includes("#token=")) return url;
+  const token = (await readFile(join(agentDir, "web-shell-token"), "utf8")).trim();
+  const parsed = new URL(url);
+  parsed.hash = `token=${token}`;
+  return parsed.toString();
 }
 
 function sleep(ms: number): Promise<void> {
@@ -70,6 +79,7 @@ async function waitForHttp(url: string, timeoutMs = 15000): Promise<boolean> {
  *
  * The banner prints the actually-bound address (see `src/server/index.ts`),
  * which is the only trustworthy source when the port was left to the OS.
+ * Piped stdout omits `#token=`; the caller attaches it from the token file.
  */
 function readServerUrl(child: ChildProcess, timeoutMs = 15000): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -140,10 +150,11 @@ async function main(): Promise<void> {
     stdio: ["ignore", "pipe", "inherit"],
   });
   try {
-    const base = await readServerUrl(server).catch((error: Error) => {
+    const printed = await readServerUrl(server).catch((error: Error) => {
       process.stderr.write(`${error.message}\n`);
       return null;
     });
+    const base = printed ? await attachToken(printed, agentDir) : null;
     if (!base || !(await waitForHttp(base))) {
       failed.push("server boot");
       process.stderr.write(`server did not come up${base ? ` at ${redactUrl(base)}` : ""}\n`);

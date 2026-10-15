@@ -19,7 +19,7 @@
     <div id="auth-gate" class="auth-gate" hidden>
       <div class="auth-gate-card">
         <h1 data-i18n="auth.title">需要重新打开终端里的链接</h1>
-        <p data-i18n="auth.body">这个页面没有有效的本地访问凭证。请回到启动 pi-web-shell 的终端，打开那里打印的完整地址（包含 #token= 的那一条）。</p>
+        <p data-i18n="auth.body">这个页面没有有效的本地访问凭证。交互式启动时，打开终端里打印的完整地址（含 #token=）。常驻服务不会把凭证写进日志：读取本机 web-shell-token 文件，用同一地址加上 #token=文件内容 打开。</p>
       </div>
     </div>
     <div id="app">

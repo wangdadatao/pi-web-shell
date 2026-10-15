@@ -21,16 +21,21 @@
 默认绑定 `127.0.0.1`。此时 `hostCheck.isHostAllowed` 只接受 loopback 的 Host，用来挡 DNS rebinding。  
 绑定非 loopback 时跳过 Host 校验（调用方显式改了监听地址）。**凭证和来源校验不会因此跳过。**
 
+绑定到局域网地址或 `0.0.0.0` 时，服务仍是**明文 HTTP**。同一网络上能看到报文的人可以读到访问凭证和 API 内容。启动时 stderr 会打出醒目警告。
+
 <a id="auth_token"></a>
 ## 安装级凭证
 
-每个 agent 目录一份随机凭证，文件 `<agentDir>/web-shell-token`，权限 `0600`，重启后复用。内容不是合法凭证时重新生成。
+每个 agent 目录一份随机凭证，文件 `<agentDir>/web-shell-token`，权限 `0600`，重启后复用。
+
+文件必须是普通文件。`lstat` 发现符号链接就拒绝，不跟随，也不 `chmod` 链接目标。内容不是合法凭证时，先在同目录写临时文件（`0600`）再 `rename` 替换，不用原地 `open('w')`。读不到文件时退出并说明怎么处理（`chmod 600` 或删掉后重启），而不是只抛系统错误。
 
 - 所有 `/api` 请求必须带上它。`fetch` 用请求头 `X-Pi-Shell-Token`。
 - `EventSource`（`/api/stream`、`/api/events`）和 `<img>`（`/api/local-image`、`/api/image/<hash>`）不能设请求头，这些 GET 也接受查询参数 `token`。写请求不接受查询参数。
-- 启动时把带片段的地址打到终端并用来打开浏览器：`http://<host>:<port>/#token=...`。片段不会随页面请求发出。前端写入 `localStorage` 后从地址栏去掉片段，同一浏览器之后打开不带片段的地址即可。
-- 凭证无效时页面展示说明，让用户重新打开终端里打印的地址，而不是只看到一个空的 401。
-- 除这行启动输出外，不要记录含凭证的完整 URL。
+- stdout 是终端时（例如交互式 `npm start`）打印并用来打开浏览器：`http://<host>:<port>/#token=...`。片段不会随页面请求发出。前端写入 `localStorage` 后从地址栏去掉片段，同一浏览器之后打开不带片段的地址即可。
+- stdout 不是终端时（LaunchAgent 日志、管道）不打印凭证，只打印不带片段的地址，并写上凭证文件路径。LaunchAgent 日志目录 `0700`，`stdout.log` / `stderr.log` 为 `0600`。见 [macOS 常驻服务](macos_service.md#service_logs)。
+- 凭证无效时页面说明怎么重新拿到它：交互式启动去打开终端里的完整地址；常驻服务则读取 `web-shell-token` 再带上 `#token=`。不是只看到一个空的 401。
+- 除交互式终端那一行启动输出外，不要记录含凭证的完整 URL。
 
 <a id="origin_check"></a>
 ## 来源校验

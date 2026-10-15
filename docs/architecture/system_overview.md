@@ -45,6 +45,7 @@ pi --mode rpc 子进程（每个被 acquire 的会话至多一个写者）
 src/shared/types.ts          wire 类型
 src/server/config.ts         环境变量与 sessions 目录策略
 src/server/index.ts          入口
+src/server/startupNotice.ts  启动横幅与非 loopback 警告
 src/server/httpServer.ts     路由、SSE、静态文件
 src/server/sessionIndex.ts   扫描/缓存/分组
 src/server/supersessions.ts  侧栏 fork 链折叠 + branch marks

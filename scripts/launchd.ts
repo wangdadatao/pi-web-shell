@@ -12,6 +12,7 @@
 
 import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { ensurePrivateLogFiles } from "./serviceLogs.ts";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -143,7 +144,7 @@ async function install(): Promise<void> {
   if (process.platform !== "darwin") {
     throw new Error("LaunchAgent install is macOS-only");
   }
-  mkdirSync(LOG_DIR, { recursive: true });
+  ensurePrivateLogFiles(LOG_DIR);
   mkdirSync(join(homedir(), "Library", "LaunchAgents"), { recursive: true });
   chmodSync(RUNNER, 0o755);
 
@@ -204,6 +205,7 @@ function status(): void {
 
 function restart(): void {
   if (!existsSync(PLIST_PATH)) throw new Error("agent is not installed; run npm run service:install");
+  ensurePrivateLogFiles(LOG_DIR);
   launchctl(["kickstart", "-k", `${DOMAIN}/${LABEL}`]);
   process.stdout.write(`restarted ${LABEL}\n`);
 }

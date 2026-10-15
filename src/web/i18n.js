@@ -41,7 +41,7 @@ const MESSAGES = {
     "api.renameFailed": "重命名失败: {status}",
     "api.deleteFailed": "删除失败: {status}",
     "auth.title": "需要重新打开终端里的链接",
-    "auth.body": "这个页面没有有效的本地访问凭证。请回到启动 pi-web-shell 的终端，打开那里打印的完整地址（包含 #token= 的那一条）。",
+    "auth.body": "这个页面没有有效的本地访问凭证。交互式启动时，打开终端里打印的完整地址（含 #token=）。常驻服务不会把凭证写进日志：读取本机 web-shell-token 文件，用同一地址加上 #token=文件内容 打开。",
 
     /* ---------- shared ---------- */
     "common.copy": "复制",
@@ -395,7 +395,7 @@ const MESSAGES = {
     "api.renameFailed": "Rename failed: {status}",
     "api.deleteFailed": "Delete failed: {status}",
     "auth.title": "Open the link printed in the terminal",
-    "auth.body": "This page does not have a valid local access token. Go back to the terminal where pi-web-shell started and open the full URL printed there (it includes #token=).",
+    "auth.body": "This page does not have a valid local access token. For an interactive start, open the full URL printed in the terminal (it includes #token=). The service does not write the token to its log: read the web-shell-token file and open the same address with #token= set to the file contents.",
 
     /* ---------- shared ---------- */
     "common.copy": "Copy",

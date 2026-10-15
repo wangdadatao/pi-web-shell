@@ -15,7 +15,7 @@
 
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
 
-function isLoopbackBind(bindHost: string): boolean {
+export function isLoopbackBind(bindHost: string): boolean {
   return bindHost === "localhost" || bindHost === "::1" || bindHost.startsWith("127.");
 }
 
